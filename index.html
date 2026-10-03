@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="ZUKKA KEY" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>ZUKKA KEY</title>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">PERSONAL KARAOKE KEY FINDER</p>
+        <h1>ZUKKA <span>KEY</span></h1>
+        <p class="sub">歌うほど、あなたの「気持ちいいキー」を学習。</p>
+      </div>
+      <button class="icon-button" id="installHelpBtn" aria-label="インストール方法">＋</button>
+    </header>
+
+    <section class="profile-card glass">
+      <div class="profile-top">
+        <div>
+          <span class="label">現在の推定スイートスポット</span>
+          <div class="big-note" id="sweetSpot">F#4〜G4</div>
+        </div>
+        <div class="confidence"><span id="confidenceValue">82</span><small>%</small><em>学習度</em></div>
+      </div>
+      <div class="meter"><i id="confidenceBar" style="width:82%"></i></div>
+      <p id="profileSummary">サビの主戦場 E4〜F#4 / 地声ピーク F#4〜G4。G#4以上は曲中の密度で判断。</p>
+    </section>
+
+    <nav class="tabs" aria-label="メインメニュー">
+      <button class="tab active" data-tab="predict">キー判定</button>
+      <button class="tab" data-tab="log">歌唱ログ</button>
+      <button class="tab" data-tab="profile">声プロフィール</button>
+    </nav>
+
+    <section class="tab-panel active" id="predictPanel">
+      <div class="glass section-card">
+        <div class="section-heading">
+          <div>
+            <span class="label">NEW SONG</span>
+            <h2>この曲、何キー？</h2>
+          </div>
+          <button class="text-button" id="sampleBtn">例を入れる</button>
+        </div>
+
+        <div class="grid two">
+          <label>曲名<input id="songTitle" placeholder="例：ワインレッドの心" autocomplete="off"></label>
+          <label>アーティスト<input id="artist" placeholder="例：安全地帯" autocomplete="off"></label>
+        </div>
+
+        <div class="note-grid">
+          <label>サビでよく使う高音
+            <select id="chorusTop"></select>
+            <small>一瞬の最高音ではなく、繰り返し出る高音</small>
+          </label>
+          <label>地声・ミックス最高音
+            <select id="chestPeak"></select>
+            <small>ファルセットは除外</small>
+          </label>
+          <label>ファルセット最高音
+            <select id="falsettoPeak"></select>
+            <small>なければ「なし」</small>
+          </label>
+          <label>最低音
+            <select id="lowNote"></select>
+            <small>下げすぎ防止に使用</small>
+          </label>
+        </div>
+
+        <label class="range-label">高音の密度 <b id="densityLabel">普通</b>
+          <input type="range" min="1" max="5" value="3" id="highDensity">
+          <div class="range-ends"><span>一瞬だけ</span><span>連発する</span></div>
+        </label>
+
+        <button class="primary" id="predictBtn">おすすめキーを出す</button>
+      </div>
+
+      <div class="result-card glass hidden" id="resultCard">
+        <p class="label">YOUR BEST KEY</p>
+        <div class="result-main">
+          <div class="key-pill" id="bestKey">-1</div>
+          <div>
+            <h3 id="resultTitle">おすすめは -1</h3>
+            <p id="resultReason"></p>
+          </div>
+        </div>
+        <div class="alternatives" id="alternatives"></div>
+        <button class="secondary" id="saveTrialBtn">この曲を歌唱ログに保存</button>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="logPanel">
+      <div class="glass section-card">
+        <div class="section-heading">
+          <div><span class="label">TRAINING DATA</span><h2>歌った結果を記録</h2></div>
+        </div>
+        <div class="grid two">
+          <label>曲名<input id="logTitle" placeholder="曲名"></label>
+          <label>アーティスト<input id="logArtist" placeholder="アーティスト"></label>
+        </div>
+        <div class="grid two">
+          <label>歌ったキー<select id="logShift"></select></label>
+          <label>歌いやすさ<select id="logRating"><option value="5">5 / ドンピシャ</option><option value="4">4 / 歌いやすい</option><option value="3">3 / 普通</option><option value="2">2 / 少し合わない</option><option value="1">1 / 合わない</option></select></label>
+        </div>
+        <div class="note-grid compact">
+          <label>サビ高音<select id="logChorus"></select></label>
+          <label>地声ピーク<select id="logPeak"></select></label>
+          <label>裏声ピーク<select id="logFalsetto"></select></label>
+          <label>最低音<select id="logLow"></select></label>
+        </div>
+        <label>メモ<textarea id="logMemo" rows="2" placeholder="例：最後のサビまで余裕。G4が気持ちいい"></textarea></label>
+        <button class="primary" id="addLogBtn">学習データに追加</button>
+      </div>
+
+      <div class="log-list" id="logList"></div>
+    </section>
+
+    <section class="tab-panel" id="profilePanel">
+      <div class="glass section-card">
+        <span class="label">VOICE MAP</span>
+        <h2>ずっかの声プロフィール</h2>
+        <div class="stats-grid">
+          <div class="stat"><span>快適サビ帯</span><strong id="statChorus">E4〜F#4</strong></div>
+          <div class="stat"><span>気持ちいいピーク</span><strong id="statPeak">F#4〜G4</strong></div>
+          <div class="stat"><span>高音注意ライン</span><strong id="statCaution">G#4〜</strong></div>
+          <div class="stat"><span>学習曲数</span><strong id="statSongs">0</strong></div>
+        </div>
+        <div class="insight" id="insightText"></div>
+      </div>
+
+      <div class="glass section-card">
+        <div class="section-heading"><div><span class="label">BACKUP</span><h2>データ管理</h2></div></div>
+        <p class="muted">データはこのiPhone内に保存されます。JSONでバックアップできます。</p>
+        <div class="button-row">
+          <button class="secondary" id="exportBtn">バックアップを書き出す</button>
+          <label class="secondary file-label">バックアップを復元<input type="file" id="importInput" accept="application/json"></label>
+        </div>
+        <button class="danger" id="resetBtn">初期データに戻す</button>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="installDialog">
+    <div class="dialog-inner">
+      <button class="close" id="closeDialog">×</button>
+      <span class="label">iPHONE</span>
+      <h2>ホーム画面に追加</h2>
+      <ol><li>このページをSafariで開く</li><li>共有ボタンをタップ</li><li>「ホーム画面に追加」</li><li>「Webアプリとして開く」をオン</li></ol>
+      <p>追加後は普通のアプリのように起動できます。</p>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
