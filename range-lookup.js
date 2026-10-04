@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.2.5';
+  const VERSION = '4.2.6';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
 
@@ -114,12 +114,20 @@
   function noteFromLabels(content, labels, reject=[]) {
     for (const label of labels) {
       for (const line of lines(content)) {
-        if (!line.includes(label)) continue;
-        if (reject.some(x => line.includes(x))) continue;
-        const m = line.match(tokenRe);
-        if (m) {
-          const midi = tokenToMidi(m[0]);
-          if (Number.isFinite(midi)) return midi;
+        const idx=line.indexOf(label);
+        if (idx<0) continue;
+
+        // Reject only when the unwanted word is close to the target label.
+        const local=line.slice(Math.max(0,idx-24), Math.min(line.length,idx+120));
+        if (reject.some(x => local.includes(x))) continue;
+
+        // Search AFTER the label. Search-result snippets often contain
+        // 最低音 / 地声最高音 / 裏声最高音 in the same single line.
+        const after=line.slice(idx+label.length, idx+label.length+100);
+        const m=after.match(tokenRe);
+        if(m){
+          const midi=tokenToMidi(m[0]);
+          if(Number.isFinite(midi))return midi;
         }
       }
     }
@@ -129,9 +137,11 @@
   function rangeFromLabels(content, labels) {
     for (const label of labels) {
       for (const line of lines(content)) {
-        if (!line.includes(label)) continue;
-        const xs = allTokens(line);
-        if (xs.length >= 2) return [xs[0].midi, xs[1].midi];
+        const idx=line.indexOf(label);
+        if(idx<0)continue;
+        const after=line.slice(idx+label.length, idx+label.length+140);
+        const xs=allTokens(after);
+        if(xs.length>=2)return [xs[0].midi,xs[1].midi];
       }
     }
     return null;
@@ -389,10 +399,12 @@
     const queries=[];
     for(const a of (artistVariants.length?artistVariants:[''])){
       queries.push(
-        `"${title}" "${a}" 地声最低音 地声最高音 裏声最高音`,
-        `"${title}" "${a}" 音域.com`,
-        `"${title}" "${a}" 最高音DB`,
-        `"${title}" "${a}" KKTI 音域`
+        `site:w.atwiki.jp/saikouon_dokoda "${title}" "${a}"`,
+        `site:music-key.com "${title}" "${a}"`,
+        `site:kkti.app/key/songs "${title}" "${a}"`,
+        `site:onikikenkyujo.com "${title}" "${a}" 音域`,
+        `site:vocal-range.com "${title}" "${a}" 音域`,
+        `"${title}" "${a}" 地声最低音 地声最高音 裏声最高音`
       );
     }
 
@@ -646,5 +658,5 @@
     ? 'WEB音域検索：準備OK（複数ソース精査モード）'
     : '初めての曲はWEB音域検索を使います。音域APIキーは未設定です。';
 
-  diag(getJinaKey()?'準備OK v4.2.5':'APIキー未設定');
+  diag(getJinaKey()?'準備OK v4.2.6':'APIキー未設定');
 })();
