@@ -1,11 +1,10 @@
-const ZUKKA_APP_VERSION='4.2.0';
-const ZUKKA_APP_BUILD='2026-10-04.2';
+const ZUKKA_APP_VERSION='4.2.1';
+const ZUKKA_APP_BUILD='2026-10-04.3';
 
 (() => {
   const versionEl=document.getElementById('appVersion');
   const statusEl=document.getElementById('updateStatus');
   if(versionEl)versionEl.textContent='v'+ZUKKA_APP_VERSION;
-
   let checking=false;
 
   async function refreshServiceWorker(){
@@ -28,11 +27,9 @@ const ZUKKA_APP_BUILD='2026-10-04.2';
       if(!res.ok)throw new Error('version check failed');
       const remote=await res.json();
       const remoteVersion=String(remote.version||'').trim();
-
       if(remoteVersion && remoteVersion!==ZUKKA_APP_VERSION){
         if(statusEl)statusEl.textContent='v'+remoteVersion+'へ更新中…';
         await refreshServiceWorker();
-
         const reloadKey='zukka-key-reload-'+remoteVersion;
         if(!sessionStorage.getItem(reloadKey)){
           sessionStorage.setItem(reloadKey,'1');
@@ -48,19 +45,10 @@ const ZUKKA_APP_BUILD='2026-10-04.2';
       }
     }catch(_){
       if(statusEl)statusEl.textContent=navigator.onLine?'更新確認失敗':'オフライン';
-    }finally{
-      checking=false;
-    }
+    }finally{checking=false;}
   }
 
-  window.addEventListener('load',async()=>{
-    await refreshServiceWorker();
-    setTimeout(checkForUpdate,400);
-  });
-
-  document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='visible')checkForUpdate();
-  });
-
+  window.addEventListener('load',async()=>{await refreshServiceWorker();setTimeout(checkForUpdate,400);});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkForUpdate();});
   window.addEventListener('online',checkForUpdate);
 })();
