@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.2.6';
+  const VERSION = '4.2.7';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
 
@@ -381,6 +381,22 @@
     try{raw=await res.text();}catch(_){}
 
     if(res.status===401||res.status===403)throw new Error('JINA_AUTH');
+
+    // Jina Search can return HTTP 422 when a valid query simply has no results
+    // (especially site:-restricted searches). Treat that as an empty result set
+    // so the next query/source can still be tried.
+    if(res.status===422){
+      const low=String(raw||'').toLowerCase();
+      if(
+        low.includes('no search results available') ||
+        low.includes('assertionfailureerror') ||
+        low.includes('code":422') ||
+        low.includes("code':422")
+      ){
+        return [];
+      }
+    }
+
     if(!res.ok){
       const compact=String(raw||'').replace(/\s+/g,' ').slice(0,180);
       throw new Error(`JINA_HTTP_${res.status}${compact?': '+compact:''}`);
@@ -398,13 +414,16 @@
     const artistVariants=artistQueryVariants(artist);
     const queries=[];
     for(const a of (artistVariants.length?artistVariants:[''])){
+      // Broad searches first because some site:-restricted Jina queries return 422
+      // even though the song exists elsewhere in the index.
       queries.push(
+        `"${title}" "${a}" 地声最低音 地声最高音 裏声最高音`,
+        `"${title}" "${a}" 最高音 最低音 音域`,
         `site:w.atwiki.jp/saikouon_dokoda "${title}" "${a}"`,
         `site:music-key.com "${title}" "${a}"`,
         `site:kkti.app/key/songs "${title}" "${a}"`,
         `site:onikikenkyujo.com "${title}" "${a}" 音域`,
-        `site:vocal-range.com "${title}" "${a}" 音域`,
-        `"${title}" "${a}" 地声最低音 地声最高音 裏声最高音`
+        `site:vocal-range.com "${title}" "${a}" 音域`
       );
     }
 
@@ -414,7 +433,18 @@
 
     for(let i=0;i<queries.length;i++){
       diag(`検索 ${i+1}/${queries.length}`);
-      const items=await jinaSearch(queries[i],key);
+      let items=[];
+      try{
+        items=await jinaSearch(queries[i],key);
+      }catch(err){
+        const msg=String(err?.message||'');
+        // A single source/query failure should not kill all fallback searches.
+        if(msg.startsWith('JINA_HTTP_422')){
+          items=[];
+        }else{
+          throw err;
+        }
+      }
       totalResults += items.length;
 
       for (const item of items) {
@@ -658,5 +688,5 @@
     ? 'WEB音域検索：準備OK（複数ソース精査モード）'
     : '初めての曲はWEB音域検索を使います。音域APIキーは未設定です。';
 
-  diag(getJinaKey()?'準備OK v4.2.6':'APIキー未設定');
+  diag(getJinaKey()?'準備OK v4.2.7':'APIキー未設定');
 })();
