@@ -1,12 +1,12 @@
 {
-  "version": "4.2.2",
-  "build": "2026-10-04.4",
+  "version": "4.2.3",
+  "build": "2026-10-04.5",
   "name": "ZUKKA KEY",
   "features": [
-    "jina-search-post-json",
-    "multi-source-vocal-range",
-    "detailed-http-diagnostics",
-    "kkti",
-    "music-key"
+    "source-priority-range-parser",
+    "separate-chest-and-falsetto",
+    "one-off-high-note-tolerance",
+    "refresh-low-confidence-old-ranges",
+    "metadata-reference-label"
   ]
 }
