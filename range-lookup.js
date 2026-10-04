@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.2.1';
+  const VERSION = '4.2.2';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const btn = document.getElementById('autoLookupBtn');
   const keyBtn = document.getElementById('rangeApiKeyBtn');
@@ -264,15 +264,37 @@
   if(keyBtn)keyBtn.onclick=setJinaKey;
 
   async function jinaSearch(query,key) {
-    const res=await fetch(`https://s.jina.ai/?q=${encodeURIComponent(query)}`,{
-      method:'GET',
+    // Jina Search current API: POST JSON body. GET ?q= can return HTTP 422.
+    const res=await fetch('https://s.jina.ai/',{
+      method:'POST',
       mode:'cors',
       cache:'no-store',
-      headers:{Authorization:`Bearer ${key}`,Accept:'application/json'}
+      headers:{
+        Authorization:`Bearer ${key}`,
+        Accept:'application/json',
+        'Content-Type':'application/json',
+        'X-No-Cache':'true'
+      },
+      body:JSON.stringify({
+        q:query,
+        hl:'ja',
+        gl:'jp',
+        num:10
+      })
     });
+
+    let raw='';
+    try{raw=await res.text();}catch(_){}
+
     if(res.status===401||res.status===403)throw new Error('JINA_AUTH');
-    if(!res.ok)throw new Error(`JINA_HTTP_${res.status}`);
-    return getItems(await res.json());
+    if(!res.ok){
+      const compact=String(raw||'').replace(/\s+/g,' ').slice(0,180);
+      throw new Error(`JINA_HTTP_${res.status}${compact?': '+compact:''}`);
+    }
+
+    let payload;
+    try{payload=JSON.parse(raw);}catch(_){throw new Error('JINA_BAD_JSON');}
+    return getItems(payload);
   }
 
   async function searchRange(title,artist) {
@@ -280,9 +302,10 @@
     if(!key)return {needsKey:true};
 
     const queries=[
-      `site:kkti.app/key/songs/ "${title}" "${artist}"`,
-      `"${title}" "${artist}" "地声最高音" "地声最低音"`,
-      `"${title}" "${artist}" "最高音" "最低音" カラオケ 音域`
+      `"${title}" "${artist}" 音域 最高音 最低音`,
+      `"${title}" "${artist}" 地声最高音 地声最低音 裏声最高音`,
+      `"${title}" "${artist}" KKTI 音域`,
+      `"${title}" "${artist}" 音域.com`
     ];
 
     let all=[];
@@ -425,7 +448,10 @@
         if(statusEl)statusEl.textContent='Jina APIキーが無効です。「音域API設定」から入れ直してください。';
       }else{
         diag(`通信/解析エラー ${msg}`);
-        if(statusEl)statusEl.textContent='WEB音域検索でエラーが出ました。診断表示を教えてください。';
+        if(statusEl)statusEl.textContent=
+          msg.startsWith('JINA_HTTP_422')
+            ? 'Jina検索APIの送信形式エラーです。v4.2.2ではPOST方式に修正済みです。'
+            : `WEB音域検索エラー: ${msg.slice(0,120)}`;
       }
     }finally{
       btn.disabled=false;
@@ -434,7 +460,7 @@
   };
 
   if(statusEl)statusEl.textContent=getJinaKey()
-    ? 'WEB音域検索：準備OK（KKTI＋音域.com）'
+    ? 'WEB音域検索：準備OK（POST検索 / KKTI＋音域.com）'
     : '初めての曲はWEB音域検索を使います。音域APIキーは未設定です。';
   diag(getJinaKey()?'準備OK':'APIキー未設定');
 })();

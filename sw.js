@@ -1,13 +1,13 @@
-const CACHE='zukka-key-v4.2.1';
+const CACHE='zukka-key-v4.2.2';
 const ASSETS=[
   './','./index.html',
-  './styles.css?v=4.2.1',
-  './app.js?v=4.2.1',
-  './hotfix.js?v=4.2.1',
-  './range-lookup.js?v=4.2.1',
-  './updater.js?v=4.2.1',
+  './styles.css?v=4.2.2',
+  './app.js?v=4.2.2',
+  './hotfix.js?v=4.2.2',
+  './range-lookup.js?v=4.2.2',
+  './updater.js?v=4.2.2',
   './version.json',
-  './manifest.webmanifest?v=4.2.1',
+  './manifest.webmanifest?v=4.2.2',
   './icon-180.png','./icon-192.png','./icon-512.png'
 ];
 
