@@ -1,5 +1,5 @@
-const ZUKKA_APP_VERSION='4.1.0';
-const ZUKKA_APP_BUILD='2026-10-04.1';
+const ZUKKA_APP_VERSION='4.2.0';
+const ZUKKA_APP_BUILD='2026-10-04.2';
 
 (() => {
   const versionEl=document.getElementById('appVersion');
