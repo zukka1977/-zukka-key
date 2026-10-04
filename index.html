@@ -56,6 +56,22 @@
           <label>アーティスト<input id="artist" placeholder="例：安全地帯" autocomplete="off"></label>
         </div>
 
+        <div class="api-search-row">
+          <button class="secondary api-search-btn" id="autoLookupBtn">曲データを自動取得</button>
+          <button class="text-button api-key-btn" id="apiKeyBtn">APIキー設定</button>
+        </div>
+        <p class="api-status" id="apiStatus">GetSongKEYから原曲キーとBPMを取得します。APIキーはこの端末だけに保存します。</p>
+        <div class="api-result hidden" id="apiResult">
+          <div class="api-result-main">
+            <div><span>原曲キー</span><strong id="originalKey">—</strong></div>
+            <div><span>BPM</span><strong id="originalBpm">—</strong></div>
+          </div>
+          <label class="api-candidates hidden" id="apiCandidatesWrap">検索候補
+            <select id="apiCandidates"></select>
+          </label>
+          <a id="apiSongLink" class="api-song-link" href="https://getsongbpm.com/" target="_blank" rel="noopener">GetSongBPMで確認</a>
+        </div>
+
         <div class="note-grid">
           <label>サビでよく使う高音
             <select id="chorusTop"></select>
@@ -157,7 +173,6 @@
       <p>追加後は普通のアプリのように起動できます。</p>
     </div>
   </dialog>
-
 
   <p style="text-align:center;font-size:12px;margin-top:24px;">
     Song data by <a href="https://getsongbpm.com/" target="_blank" rel="noopener">GetSongBPM</a>

@@ -1,5 +1,7 @@
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const STORAGE_KEY='zukka-key-data-v1';
+const API_KEY_STORAGE='zukka-key-getsong-api-key';
+const API_BASE='https://api.getsong.co';
 const defaultData={
   profile:{preferredChorusLow:64,preferredChorusHigh:66,preferredPeakLow:66,preferredPeakHigh:67,caution:68,minComfortLow:48},
   logs:[
@@ -27,6 +29,77 @@ function populateShifts(){const el=document.getElementById('logShift');for(let i
 function setupSelects(){
   populateNoteSelect(chorusTop,55,73,false,66);populateNoteSelect(chestPeak,55,76,false,67);populateNoteSelect(falsettoPeak,55,79,true,null);populateNoteSelect(lowNote,40,60,false,48);
   populateNoteSelect(logChorus,55,73,false,66);populateNoteSelect(logPeak,55,76,false,67);populateNoteSelect(logFalsetto,55,79,true,null);populateNoteSelect(logLow,40,60,false,48);populateShifts();
+}
+
+
+function getApiKey(){return localStorage.getItem(API_KEY_STORAGE)||''}
+function setApiKey(){
+  const current=getApiKey();
+  const key=prompt('GetSongKEY APIキーを入力してください。\nこのキーはGitHubには保存せず、このiPhone内だけに保存します。',current);
+  if(key===null)return false;
+  const clean=key.trim();
+  if(!clean){localStorage.removeItem(API_KEY_STORAGE);apiStatus.textContent='APIキーを削除しました。';return false}
+  localStorage.setItem(API_KEY_STORAGE,clean);apiStatus.textContent='APIキーをこの端末に保存しました。';return true;
+}
+function artistNameOf(song){
+  const a=song&&song.artist;
+  if(!a)return '';
+  if(Array.isArray(a))return a.map(x=>x&&x.name).filter(Boolean).join(', ');
+  return a.name||String(a);
+}
+function normalizeText(v){return String(v||'').normalize('NFKC').toLowerCase().replace(/[\s　・･\-–—_]/g,'')}
+function chooseBestSong(items,title,artistName){
+  const nt=normalizeText(title),na=normalizeText(artistName);
+  return [...items].sort((a,b)=>{
+    const score=x=>{
+      let z=0,xt=normalizeText(x.title),xa=normalizeText(artistNameOf(x));
+      if(xt===nt)z+=10;else if(xt.includes(nt)||nt.includes(xt))z+=5;
+      if(na){if(xa===na)z+=10;else if(xa.includes(na)||na.includes(xa))z+=5}
+      return z;
+    };
+    return score(b)-score(a);
+  })[0];
+}
+function renderApiCandidate(song){
+  if(!song)return;
+  originalKey.textContent=song.key_of||'—';
+  originalBpm.textContent=song.tempo||'—';
+  apiSongLink.href=song.uri||'https://getsongbpm.com/';
+  apiResult.classList.remove('hidden');
+  if(song.title)songTitle.value=song.title;
+  const an=artistNameOf(song);if(an)artist.value=an;
+}
+function renderApiCandidates(items,selectedId){
+  apiCandidates.innerHTML='';
+  for(const song of items){
+    const o=document.createElement('option');
+    o.value=song.id||'';
+    const an=artistNameOf(song);
+    o.textContent=`${song.title||'不明'} — ${an||'不明'}｜${song.key_of||'?'}｜${song.tempo||'?'} BPM`;
+    if(song.id===selectedId)o.selected=true;
+    apiCandidates.append(o);
+  }
+  apiCandidatesWrap.classList.toggle('hidden',items.length<=1);
+  apiCandidates.onchange=()=>renderApiCandidate(items.find(x=>String(x.id)===apiCandidates.value));
+}
+async function autoLookup(){
+  const title=songTitle.value.trim(), artistName=artist.value.trim();
+  if(!title){alert('曲名を入れてください');return}
+  let key=getApiKey();if(!key){if(!setApiKey())return;key=getApiKey();if(!key)return}
+  autoLookupBtn.disabled=true;autoLookupBtn.textContent='検索中…';apiStatus.textContent='GetSongKEYで検索しています…';
+  try{
+    const params=new URLSearchParams();params.set('api_key',key);params.set('limit','8');
+    if(artistName){params.set('type','both');params.set('lookup',`song:${title} artist:${artistName}`)}
+    else{params.set('type','song');params.set('lookup',title)}
+    const res=await fetch(`${API_BASE}/search/?${params.toString()}`,{method:'GET',mode:'cors',cache:'no-store'});
+    if(!res.ok)throw new Error(`HTTP ${res.status}`);
+    const payload=await res.json();const items=Array.isArray(payload.search)?payload.search:[];
+    if(!items.length){apiResult.classList.add('hidden');apiStatus.textContent='一致する曲が見つかりませんでした。アーティスト名も入れて再検索してください。';return}
+    const best=chooseBestSong(items,title,artistName);renderApiCandidates(items,best&&best.id);renderApiCandidate(best||items[0]);
+    apiStatus.textContent=`${items.length}件見つかりました。原曲キー/BPMを取得しました。歌唱音域は次の段階で自動化します。`;
+  }catch(err){
+    console.error(err);apiStatus.textContent='自動取得に失敗しました。APIキーを確認してください。ブラウザからAPIへの直接通信が拒否される場合は、次に安全な中継APIを追加します。';
+  }finally{autoLookupBtn.disabled=false;autoLookupBtn.textContent='曲データを自動取得'}
 }
 
 function candidateScore(song,shift){
@@ -130,6 +203,7 @@ function importData(file){const r=new FileReader();r.onload=()=>{try{const v=JSO
 setupSelects();refreshAll();
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.tab));
 predictBtn.onclick=runPrediction;addLogBtn.onclick=addLogFromForm;saveTrialBtn.onclick=savePredictedTrial;
+autoLookupBtn.onclick=autoLookup;apiKeyBtn.onclick=setApiKey;
 highDensity.oninput=()=>densityLabel.textContent=['','少ない','やや少ない','普通','多い','かなり多い'][+highDensity.value];
 sampleBtn.onclick=()=>{songTitle.value='新しい曲';artist.value='';chorusTop.value=66;chestPeak.value=68;falsettoPeak.value=70;lowNote.value=48;highDensity.value=4;highDensity.oninput()};
 installHelpBtn.onclick=()=>installDialog.showModal();closeDialog.onclick=()=>installDialog.close();
