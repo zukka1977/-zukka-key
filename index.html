@@ -18,7 +18,7 @@
       <div>
         <p class="eyebrow">PERSONAL KARAOKE KEY FINDER</p>
         <h1>ZUKKA <span>KEY</span></h1>
-        <p class="sub">曲データ＋歌唱履歴から、ずっか向けキーを判定。</p>
+        <p class="sub">歌うほど、あなたの「気持ちいいキー」を学習。</p>
       </div>
       <button class="icon-button" id="installHelpBtn" aria-label="インストール方法">＋</button>
     </header>
@@ -45,42 +45,37 @@
       <div class="glass section-card">
         <div class="section-heading">
           <div>
-            <span class="label">AUTO SONG CHECK</span>
-            <h2>曲名から自動判定</h2>
+            <span class="label">NEW SONG</span>
+            <h2>この曲、何キー？</h2>
           </div>
           <button class="text-button" id="sampleBtn">例を入れる</button>
         </div>
 
         <div class="grid two">
-          <label>曲名<input id="songTitle" placeholder="例：会いたい" autocomplete="off"></label>
-          <label>アーティスト<input id="artist" placeholder="例：徳永英明" autocomplete="off"></label>
+          <label>曲名<input id="songTitle" placeholder="例：ワインレッドの心" autocomplete="off"></label>
+          <label>アーティスト<input id="artist" placeholder="例：安全地帯" autocomplete="off"></label>
         </div>
 
         <div class="api-search-row">
-          <button class="primary api-search-btn" id="autoLookupBtn">曲データ取得 → ずっか判定</button>
+          <button class="secondary api-search-btn" id="autoLookupBtn">曲データ取得 → ずっか判定</button>
           <button class="text-button api-key-btn" id="apiKeyBtn">APIキー設定</button>
         </div>
-        <p class="api-status" id="apiStatus">原曲キー/BPMを取得し、保存済み音域や歌唱履歴があればそのまま推奨キーまで出します。</p>
+        <p class="api-status" id="apiStatus">GetSongKEYから原曲キー/BPMを取得し、保存済みの歌唱データと照合します。</p>
 
         <div class="api-result hidden" id="apiResult">
           <div class="api-result-main">
             <div><span>原曲キー</span><strong id="originalKey">—</strong></div>
             <div><span>BPM</span><strong id="originalBpm">—</strong></div>
           </div>
-          <div class="smart-grid">
-            <div><span>音域データ</span><strong id="rangeDataStatus">—</strong></div>
-            <div><span>ずっか判定</span><strong id="personalKeyStatus">—</strong></div>
+          <div class="stats-grid" style="margin-top:10px">
+            <div class="stat"><span>音域データ</span><strong id="rangeDataStatus">—</strong></div>
+            <div class="stat"><span>ずっか判定</span><strong id="personalKeyStatus">—</strong></div>
           </div>
-          <p class="range-note" id="rangeDataNote"></p>
+          <p class="api-status" id="rangeDataNote"></p>
           <label class="api-candidates hidden" id="apiCandidatesWrap">検索候補
             <select id="apiCandidates"></select>
           </label>
           <a id="apiSongLink" class="api-song-link" href="https://getsongbpm.com/" target="_blank" rel="noopener">GetSongBPMで確認</a>
-        </div>
-
-        <div class="manual-heading">
-          <div><span class="label">VOCAL RANGE</span><h3>歌唱音域</h3></div>
-          <span class="source-badge" id="rangeSourceBadge">手入力</span>
         </div>
 
         <div class="note-grid">
@@ -107,11 +102,12 @@
           <div class="range-ends"><span>一瞬だけ</span><span>連発する</span></div>
         </label>
 
-        <div class="button-stack">
-          <button class="primary" id="predictBtn">この音域でおすすめキーを出す</button>
-          <button class="secondary" id="saveRangeBtn">この音域をこの曲に保存</button>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <span class="label">音域ソース</span>
+          <span id="rangeSourceBadge" class="label">手入力</span>
         </div>
-        <p class="api-status">音域を一度保存した曲は、次回から曲名検索だけで自動判定できます。</p>
+        <button class="secondary" id="saveRangeBtn" style="width:100%;margin-bottom:10px">この曲の音域を保存</button>
+        <button class="primary" id="predictBtn">おすすめキーを出す</button>
       </div>
 
       <div class="result-card glass hidden" id="resultCard">
@@ -123,7 +119,7 @@
             <p id="resultReason"></p>
           </div>
         </div>
-        <div class="result-meta" id="resultMeta"></div>
+        <p class="api-status" id="resultMeta"></p>
         <div class="alternatives" id="alternatives"></div>
         <button class="secondary" id="saveTrialBtn">この曲を歌唱ログに保存</button>
       </div>
@@ -151,7 +147,6 @@
         <label>メモ<textarea id="logMemo" rows="2" placeholder="例：最後のサビまで余裕。G4が気持ちいい"></textarea></label>
         <button class="primary" id="addLogBtn">学習データに追加</button>
       </div>
-
       <div class="log-list" id="logList"></div>
     </section>
 
@@ -167,10 +162,9 @@
         </div>
         <div class="insight" id="insightText"></div>
       </div>
-
       <div class="glass section-card">
         <div class="section-heading"><div><span class="label">BACKUP</span><h2>データ管理</h2></div></div>
-        <p class="muted">歌唱ログ・声プロフィール・保存した曲別音域をJSONでバックアップできます。</p>
+        <p class="muted">データはこのiPhone内に保存されます。JSONでバックアップできます。</p>
         <div class="button-row">
           <button class="secondary" id="exportBtn">バックアップを書き出す</button>
           <label class="secondary file-label">バックアップを復元<input type="file" id="importInput" accept="application/json"></label>
@@ -195,5 +189,6 @@
   </p>
 
   <script src="app.js"></script>
+  <script src="hotfix.js?v=1"></script>
 </body>
 </html>
