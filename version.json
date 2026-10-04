@@ -1,12 +1,12 @@
 {
-  "version": "4.2.4",
-  "build": "2026-10-04.6",
+  "version": "4.2.5",
+  "build": "2026-10-04.7",
   "name": "ZUKKA KEY",
   "features": [
+    "artist-name-variant-matching",
+    "trailing-long-vowel-tolerance",
     "current-song-range-identity",
-    "stale-ui-reset",
     "getsong-independent-range-search",
-    "source-priority-range-parser",
-    "one-off-high-note-tolerance"
+    "source-priority-range-parser"
   ]
 }

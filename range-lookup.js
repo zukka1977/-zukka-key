@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.2.4';
+  const VERSION = '4.2.5';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
 
@@ -16,6 +16,15 @@
       .normalize('NFKC')
       .toLowerCase()
       .replace(/[★☆♪♬\s　・･\-–—_「」『』【】()[\]（）"'’.,，。!！?？〜～]/g, '');
+
+  // Artist names often have harmless notation differences:
+  // ポルノグラフィティ / ポルノグラフィティー, etc.
+  const artistNorm = (v) => norm(v).replace(/[ーｰ]/g,'');
+  const artistQueryVariants = (v) => {
+    const raw=String(v||'').trim();
+    const vars=[raw, raw.replace(/[ーｰ]+$/g,'')].filter(Boolean);
+    return [...new Set(vars)];
+  };
 
   const notePc = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
   const NOTE_TOKEN = '(?:hihihi|hihi|hi|mid2|mid1|low)[A-G](?:[#♯b♭])?|[A-G](?:[#♯b♭])?[1-7]';
@@ -89,11 +98,16 @@
   }
 
   function containsIdentity(item, title, artist) {
-    const hay = norm(`${item.title || ''}\n${item.content || ''}`);
+    const rawHay=`${item.title || ''}\n${item.content || ''}`;
+    const hay = norm(rawHay);
     const qt = norm(title);
-    const qa = norm(artist);
+    const qa = artistNorm(artist);
     if (!qt || !hay.includes(qt)) return false;
-    if (qa && !hay.includes(qa)) return false;
+
+    if (qa) {
+      const looseHay=artistNorm(rawHay);
+      if (!looseHay.includes(qa)) return false;
+    }
     return true;
   }
 
@@ -371,12 +385,16 @@
     const key=getJinaKey();
     if(!key)return {needsKey:true};
 
-    const queries=[
-      `"${title}" "${artist}" 地声最低音 地声最高音 裏声最高音`,
-      `"${title}" "${artist}" 音域.com`,
-      `"${title}" "${artist}" 最高音DB`,
-      `"${title}" "${artist}" KKTI 音域`
-    ];
+    const artistVariants=artistQueryVariants(artist);
+    const queries=[];
+    for(const a of (artistVariants.length?artistVariants:[''])){
+      queries.push(
+        `"${title}" "${a}" 地声最低音 地声最高音 裏声最高音`,
+        `"${title}" "${a}" 音域.com`,
+        `"${title}" "${a}" 最高音DB`,
+        `"${title}" "${a}" KKTI 音域`
+      );
+    }
 
     const seen = new Set();
     const candidates = [];
@@ -628,5 +646,5 @@
     ? 'WEB音域検索：準備OK（複数ソース精査モード）'
     : '初めての曲はWEB音域検索を使います。音域APIキーは未設定です。';
 
-  diag(getJinaKey()?'準備OK v4.2.4':'APIキー未設定');
+  diag(getJinaKey()?'準備OK v4.2.5':'APIキー未設定');
 })();
