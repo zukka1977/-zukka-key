@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.2.3';
+  const VERSION = '4.2.4';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
 
@@ -509,9 +509,30 @@
     return t.includes('実測ベスト')||s.includes('実測ログ');
   }
 
-  function hasSavedRange(){
-    const s=document.getElementById('rangeDataStatus')?.textContent||'';
-    return s==='あり'||s==='WEB取得'||s==='実測あり';
+  function savedRangeFor(title,artist){
+    try{
+      const raw=JSON.parse(localStorage.getItem(RANGE_STORAGE)||'{}');
+      const id=typeof songIdentity==='function'
+        ? songIdentity(title,artist)
+        : `${norm(artist)}::${norm(title)}`;
+      return raw[id]||null;
+    }catch(_){
+      return null;
+    }
+  }
+
+  function clearPreviousSongUi(){
+    const rs=document.getElementById('rangeDataStatus');
+    const ps=document.getElementById('personalKeyStatus');
+    const rn=document.getElementById('rangeDataNote');
+    const badge=document.getElementById('rangeSourceBadge');
+    const card=document.getElementById('resultCard');
+
+    if(rs){rs.textContent='—';rs.className='';}
+    if(ps){ps.textContent='—';ps.className='';}
+    if(rn)rn.textContent='';
+    if(badge)badge.textContent='検索待ち';
+    if(card)card.classList.add('hidden');
   }
 
   btn.onclick=async function(event){
@@ -519,6 +540,11 @@
     const artistEl=document.getElementById('artist');
     const title=titleEl?.value?.trim()||'';
     const artist=artistEl?.value?.trim()||'';
+
+    // Important: visible state may still belong to the previously searched song.
+    // Reset it before any lookup so another song's WEB取得/推奨キー cannot leak forward.
+    clearPreviousSongUi();
+    diag('新しい曲として検索開始');
 
     await previousLookup.call(this,event);
 
@@ -528,24 +554,20 @@
       return;
     }
 
-    // A saved WEB range from an older parser may be low-confidence/wrong.
-    // Re-search older generic WEB data; preserve manual/confirmed ranges.
-    if(hasSavedRange()){
-      let shouldRefresh=false;
-      try{
-        const raw=JSON.parse(localStorage.getItem(RANGE_STORAGE)||'{}');
-        const id=typeof songIdentity==='function' ? songIdentity(title,artist) : `${norm(artist)}::${norm(title)}`;
-        const saved=raw[id];
-        shouldRefresh=!!saved && (
-          saved.source==='WEB / 音域ソース' ||
-          !saved.sourceQuality ||
-          Number(saved.sourceQuality)<65
-        );
-      }catch(_){}
+    // Only use a range if it belongs to THIS title + artist.
+    // v4.2.3 incorrectly looked at the visible "WEB取得" badge, so the prior
+    // song could be mistaken for the newly entered song.
+    const saved=savedRangeFor(title,artist);
+    if(saved){
+      const shouldRefresh=
+        saved.source==='WEB / 音域ソース' ||
+        !saved.sourceQuality ||
+        Number(saved.sourceQuality)<65;
 
       if(!shouldRefresh){
-        diag('保存済み音域使用');
-        if(statusEl)statusEl.textContent='保存済みの高信頼音域から推奨キーを表示しました。';
+        applyRange(saved,title,artist);
+        diag('この曲の保存済み音域使用');
+        if(statusEl)statusEl.textContent='この曲に保存済みの高信頼音域から推奨キーを表示しました。';
         return;
       }
     }
@@ -561,7 +583,7 @@
     const oldText=btn.textContent;
     btn.disabled=true;
     btn.textContent='WEB音域精査中…';
-    if(statusEl)statusEl.textContent='複数の音域DBを照合しています…';
+    if(statusEl)statusEl.textContent='GetSongに曲がなくても問題ありません。複数の音域DBを照合しています…';
 
     try{
       const found=await searchRange(title,artist);
@@ -606,5 +628,5 @@
     ? 'WEB音域検索：準備OK（複数ソース精査モード）'
     : '初めての曲はWEB音域検索を使います。音域APIキーは未設定です。';
 
-  diag(getJinaKey()?'準備OK v4.2.3':'APIキー未設定');
+  diag(getJinaKey()?'準備OK v4.2.4':'APIキー未設定');
 })();
