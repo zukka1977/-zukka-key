@@ -1,7 +1,8 @@
 (() => {
-  const VERSION = '4.2.7';
+  const VERSION = '4.3.0';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
+  const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v1';
 
   const btn = document.getElementById('autoLookupBtn');
   const keyBtn = document.getElementById('rangeApiKeyBtn');
@@ -97,18 +98,41 @@
     return best;
   }
 
-  function containsIdentity(item, title, artist) {
-    const rawHay=`${item.title || ''}\n${item.content || ''}`;
-    const hay = norm(rawHay);
-    const qt = norm(title);
-    const qa = artistNorm(artist);
-    if (!qt || !hay.includes(qt)) return false;
+  function identityEvidence(item, title, artist) {
+    const itemTitle=String(item?.title || '');
+    const content=String(item?.content || '');
+    const qt=norm(title);
+    const qa=artistNorm(artist);
+    if(!qt)return 0;
 
-    if (qa) {
-      const looseHay=artistNorm(rawHay);
-      if (!looseHay.includes(qa)) return false;
+    const titleNorm=norm(itemTitle);
+    const contentNorm=norm(content);
+    if(!titleNorm.includes(qt) && !contentNorm.includes(qt))return 0;
+    if(!qa)return titleNorm.includes(qt) ? 35 : 20;
+
+    const itemTitleArtist=artistNorm(itemTitle);
+    if(titleNorm.includes(qt) && itemTitleArtist.includes(qa))return 60;
+
+    // The requested artist should appear close to the exact song-title row.
+    // This prevents another artist's version on a long catalogue page from
+    // being mistaken for the requested cover.
+    const ls=lines(content);
+    const idx=exactTitleIndex(content,title);
+    if(idx>=0){
+      const local=artistNorm(ls.slice(Math.max(0,idx-3),Math.min(ls.length,idx+6)).join(' '));
+      if(local.includes(qa))return 50;
     }
-    return true;
+
+    // Search snippets are sometimes flattened into one short block. Accept
+    // those only when both title and artist are present in the short snippet.
+    const rawHay=`${itemTitle}
+${content}`;
+    if(rawHay.length<=2600 && artistNorm(rawHay).includes(qa))return 30;
+    return 0;
+  }
+
+  function containsIdentity(item, title, artist) {
+    return identityEvidence(item,title,artist) >= (artist ? 30 : 20);
   }
 
   function noteFromLabels(content, labels, reject=[]) {
@@ -339,6 +363,36 @@
     return [];
   }
 
+  function lookupIdentity(title,artist){
+    if(typeof songIdentity==='function')return songIdentity(title,artist);
+    return `${artistNorm(artist)}::${norm(title)}`;
+  }
+
+  function readLookupState(){
+    try{return JSON.parse(localStorage.getItem(LOOKUP_STATE_STORAGE)||'{}')||{};}catch(_){return {};}
+  }
+  function writeLookupState(state){
+    try{localStorage.setItem(LOOKUP_STATE_STORAGE,JSON.stringify(state));}catch(_){}
+  }
+  function blockLookup(title,artist,reason,minutes){
+    const state=readLookupState();
+    state[lookupIdentity(title,artist)]={reason,until:Date.now()+minutes*60*1000};
+    writeLookupState(state);
+  }
+  function lookupBlock(title,artist){
+    const state=readLookupState();
+    const key=lookupIdentity(title,artist);
+    const row=state[key];
+    if(!row)return null;
+    if(Number(row.until)<=Date.now()){
+      delete state[key];writeLookupState(state);return null;
+    }
+    return row;
+  }
+  function clearLookupBlock(title,artist){
+    const state=readLookupState();delete state[lookupIdentity(title,artist)];writeLookupState(state);
+  }
+
   function getJinaKey() {
     return localStorage.getItem(JINA_KEY_STORAGE) || '';
   }
@@ -357,50 +411,57 @@
       return false;
     }
     localStorage.setItem(JINA_KEY_STORAGE,clean);
-    if(statusEl)statusEl.textContent='音域検索APIキーを保存しました。';
+    localStorage.removeItem(LOOKUP_STATE_STORAGE);
+    if(statusEl)statusEl.textContent='音域検索APIキーを保存しました。再検索できます。';
     diag('APIキー保存済み');
     return true;
   }
   if(keyBtn)keyBtn.onclick=setJinaKey;
 
   async function jinaSearch(query,key) {
-    const res=await fetch('https://s.jina.ai/',{
-      method:'POST',
-      mode:'cors',
-      cache:'no-store',
-      headers:{
-        Authorization:`Bearer ${key}`,
-        Accept:'application/json',
-        'Content-Type':'application/json',
-        'X-No-Cache':'true'
-      },
-      body:JSON.stringify({q:query,hl:'ja',gl:'jp',num:10})
-    });
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),12000);
+    let res;
+    try{
+      res=await fetch('https://s.jina.ai/',{
+        method:'POST',
+        mode:'cors',
+        cache:'no-store',
+        signal:controller.signal,
+        headers:{
+          Authorization:`Bearer ${key}`,
+          Accept:'application/json',
+          'Content-Type':'application/json',
+          'X-No-Cache':'true'
+        },
+        body:JSON.stringify({q:query,hl:'ja',gl:'jp',num:8})
+      });
+    }catch(err){
+      if(err?.name==='AbortError')throw new Error('JINA_TIMEOUT');
+      throw new Error('JINA_NETWORK');
+    }finally{
+      clearTimeout(timer);
+    }
 
     let raw='';
     try{raw=await res.text();}catch(_){}
+    const low=String(raw||'').toLowerCase();
 
     if(res.status===401||res.status===403)throw new Error('JINA_AUTH');
+    if(res.status===402 || low.includes('insufficientbalance') || low.includes('balance not enough'))throw new Error('JINA_QUOTA');
+    if(res.status===429)throw new Error('JINA_RATE_LIMIT');
 
-    // Jina Search can return HTTP 422 when a valid query simply has no results
-    // (especially site:-restricted searches). Treat that as an empty result set
-    // so the next query/source can still be tried.
     if(res.status===422){
-      const low=String(raw||'').toLowerCase();
       if(
         low.includes('no search results available') ||
         low.includes('assertionfailureerror') ||
         low.includes('code":422') ||
         low.includes("code':422")
-      ){
-        return [];
-      }
+      )return [];
     }
 
-    if(!res.ok){
-      const compact=String(raw||'').replace(/\s+/g,' ').slice(0,180);
-      throw new Error(`JINA_HTTP_${res.status}${compact?': '+compact:''}`);
-    }
+    if(res.status>=500)throw new Error('JINA_TEMP');
+    if(!res.ok)throw new Error(`JINA_HTTP_${res.status}`);
 
     let payload;
     try{payload=JSON.parse(raw);}catch(_){throw new Error('JINA_BAD_JSON');}
@@ -411,25 +472,20 @@
     const key=getJinaKey();
     if(!key)return {needsKey:true};
 
-    const artistVariants=artistQueryVariants(artist);
-    const queries=[];
-    for(const a of (artistVariants.length?artistVariants:[''])){
-      // Broad searches first because some site:-restricted Jina queries return 422
-      // even though the song exists elsewhere in the index.
-      queries.push(
-        `"${title}" "${a}" 地声最低音 地声最高音 裏声最高音`,
-        `"${title}" "${a}" 最高音 最低音 音域`,
-        `site:w.atwiki.jp/saikouon_dokoda "${title}" "${a}"`,
-        `site:music-key.com "${title}" "${a}"`,
-        `site:kkti.app/key/songs "${title}" "${a}"`,
-        `site:onikikenkyujo.com "${title}" "${a}" 音域`,
-        `site:vocal-range.com "${title}" "${a}" 音域`
-      );
-    }
+    const variants=artistQueryVariants(artist);
+    const primary=variants[0]||artist||'';
+    const alternate=variants.find(v=>v!==primary)||'';
+    const queries=[
+      `"${title}" "${primary}" 地声最低音 地声最高音 裏声最高音`,
+      `site:music-key.com "${title}" "${primary}"`,
+      `site:w.atwiki.jp/saikouon_dokoda "${title}" "${primary}"`,
+      `site:kkti.app/key/songs "${title}" "${primary}"`
+    ];
+    if(alternate)queries.push(`"${title}" "${alternate}" 最高音 最低音 音域`);
 
-    const seen = new Set();
-    const candidates = [];
-    let totalResults = 0;
+    const seen=new Set();
+    const candidates=[];
+    let totalResults=0;
 
     for(let i=0;i<queries.length;i++){
       diag(`検索 ${i+1}/${queries.length}`);
@@ -438,35 +494,36 @@
         items=await jinaSearch(queries[i],key);
       }catch(err){
         const msg=String(err?.message||'');
-        // A single source/query failure should not kill all fallback searches.
-        if(msg.startsWith('JINA_HTTP_422')){
-          items=[];
-        }else{
-          throw err;
-        }
+        if(msg.startsWith('JINA_HTTP_422'))items=[];
+        else throw err;
       }
-      totalResults += items.length;
+      totalResults+=items.length;
 
-      for (const item of items) {
-        const id = `${item.url || ''}::${item.title || ''}`;
-        if (seen.has(id)) continue;
+      for(const item of items){
+        const id=`${item.url||''}::${item.title||''}`;
+        if(seen.has(id))continue;
         seen.add(id);
 
-        const parsed = parseAny(item,title,artist);
-        if (!parsed) continue;
+        const evidence=identityEvidence(item,title,artist);
+        if(evidence < (artist ? 30 : 20))continue;
+        const parsed=parseAny(item,title,artist);
+        if(!parsed)continue;
 
-        // Exact-source parsers beat generic sources. Completeness breaks ties.
-        let score = parsed.sourceQuality || 0;
-        if (parsed.falsetto != null) score += 5;
-        if (parsed.oneOffPeak || parsed.frequentPeak) score += 6;
-        if (parsed.noteText) score += 2;
-
-        candidates.push({...parsed,_score:score});
+        let score=parsed.sourceQuality||0;
+        score+=evidence;
+        if(parsed.falsetto!=null)score+=5;
+        if(parsed.oneOffPeak||parsed.frequentPeak)score+=6;
+        if(parsed.noteText)score+=2;
+        candidates.push({...parsed,identityScore:evidence,_score:score});
       }
+
+      const strong=candidates.find(x=>Number(x.sourceQuality)>=88 && Number(x.identityScore)>=50);
+      if(strong)break;
     }
 
     candidates.sort((a,b)=>b._score-a._score);
-    return {range:candidates[0] || null,count:totalResults,candidates};
+    const reliable=candidates.filter(x=>Number(x.sourceQuality)>=65 && Number(x.identityScore)>=30);
+    return {range:reliable[0]||null,count:totalResults,candidates,reliableCount:reliable.length};
   }
 
   function ensureSelectValue(select,midi){
@@ -497,6 +554,8 @@
         sourceQuality:range.sourceQuality,
         sourceUrl:range.sourceUrl,
         noteText:range.noteText,
+        identityScore:range.identityScore||null,
+        fetchedAt:range.fetchedAt||new Date().toISOString(),
         title,artist
       };
       localStorage.setItem(RANGE_STORAGE,JSON.stringify(raw));
@@ -619,20 +678,27 @@
     // song could be mistaken for the newly entered song.
     const saved=savedRangeFor(title,artist);
     if(saved){
-      const shouldRefresh=
-        saved.source==='WEB / 音域ソース' ||
-        !saved.sourceQuality ||
-        Number(saved.sourceQuality)<65;
-
-      if(!shouldRefresh){
+      const trusted=!!saved.manualConfirmed || Number(saved.sourceQuality)>=65;
+      if(trusted){
         applyRange(saved,title,artist);
-        diag('この曲の保存済み音域使用');
-        if(statusEl)statusEl.textContent='この曲に保存済みの高信頼音域から推奨キーを表示しました。';
+        diag(saved.manualConfirmed?'手動確認済みキャッシュ使用':'保存済み音域キャッシュ使用');
+        if(statusEl)statusEl.textContent=saved.manualConfirmed
+          ? 'この曲の手動確認済み音域を使用しました。WEB検索は行っていません。'
+          : 'この曲の保存済み音域を使用しました。WEB検索は行っていません。';
         return;
       }
     }
 
     if(!title)return;
+
+    const blocked=lookupBlock(title,artist);
+    if(blocked){
+      diag(blocked.reason==='quota'?'利用上限・再試行待ち':'直近検索を再利用');
+      if(statusEl)statusEl.textContent=blocked.reason==='quota'
+        ? 'WEB音域検索は利用上限のため一時停止中です。キー/BPMはそのまま使えます。手入力で判定を続けられます。'
+        : 'この曲は直近のWEB検索で確かな音域が見つかりませんでした。API節約のため少し時間を空けて再検索します。';
+      return;
+    }
 
     if(!getJinaKey()){
       diag('音域APIキー未設定');
@@ -649,14 +715,16 @@
       const found=await searchRange(title,artist);
 
       if(!found.range){
+        blockLookup(title,artist,'no-result',360);
         diag(`一致データなし（検索結果 ${found.count||0}件）`);
         if(statusEl)statusEl.textContent=
-          '曲名・アーティストが一致する信頼できる音域データを確認できませんでした。誤判定防止のため推測値は出していません。';
+          '曲名・アーティストが一致する信頼できる音域データを確認できませんでした。誤判定防止のため推測値は出していません。手入力で続行できます。';
         return;
       }
 
       if(titleEl)titleEl.value=title;
       if(artistEl)artistEl.value=artist;
+      clearLookupBlock(title,artist);
 
       applyRange(found.range,title,artist);
 
@@ -674,10 +742,22 @@
       if(msg==='JINA_AUTH'){
         diag('Jina認証エラー');
         if(statusEl)statusEl.textContent='Jina APIキーが無効です。「音域API設定」から入れ直してください。';
+      }else if(msg==='JINA_QUOTA'){
+        blockLookup(title,artist,'quota',30);
+        diag('Jina利用上限');
+        if(statusEl)statusEl.textContent='WEB音域検索の利用上限に達しました。キー/BPMは取得済みのまま残します。音域を手入力すれば判定を続けられます。';
+      }else if(msg==='JINA_RATE_LIMIT'){
+        blockLookup(title,artist,'rate-limit',5);
+        diag('Jina混雑・再試行待ち');
+        if(statusEl)statusEl.textContent='WEB音域検索が混み合っています。数分後に再試行するか、手入力で続けてください。';
+      }else if(msg==='JINA_TIMEOUT'||msg==='JINA_NETWORK'||msg==='JINA_TEMP'){
+        diag('WEB音域検索を一時利用できません');
+        if(statusEl)statusEl.textContent='WEB音域検索を一時利用できません。キー/BPMは残しています。通信回復後に再試行できます。';
       }else{
-        diag(`通信/解析エラー ${msg}`);
-        if(statusEl)statusEl.textContent=`WEB音域検索エラー: ${msg.slice(0,120)}`;
+        diag('WEB音域検索エラー');
+        if(statusEl)statusEl.textContent='WEB音域検索に失敗しました。キー/BPMは残しています。手入力で判定を続けられます。';
       }
+
     }finally{
       btn.disabled=false;
       btn.textContent=oldText;
@@ -688,5 +768,5 @@
     ? 'WEB音域検索：準備OK（複数ソース精査モード）'
     : '初めての曲はWEB音域検索を使います。音域APIキーは未設定です。';
 
-  diag(getJinaKey()?'準備OK v4.2.7':'APIキー未設定');
+  diag(getJinaKey()?'準備OK v4.3.0':'APIキー未設定');
 })();

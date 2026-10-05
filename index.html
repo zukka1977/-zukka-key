@@ -7,9 +7,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="ZUKKA KEY" />
-  <link rel="manifest" href="manifest.webmanifest?v=4.2.7" />
+  <link rel="manifest" href="manifest.webmanifest?v=4.3.0" />
   <link rel="apple-touch-icon" href="icon-180.png" />
-  <link rel="stylesheet" href="styles.css?v=4.2.7" />
+  <link rel="stylesheet" href="styles.css?v=4.3.0" />
   <title>ZUKKA KEY</title>
 </head>
 <body>
@@ -20,7 +20,7 @@
         <h1>ZUKKA <span>KEY</span></h1>
         <p class="sub">歌うほど、あなたの「気持ちいいキー」を学習。</p>
         <p style="margin:6px 0 0;color:#77849a;font-size:10px;font-weight:700;letter-spacing:.04em;">
-          ZUKKA KEY <span id="appVersion">v4.2.7</span> · <span id="updateStatus">更新確認中</span>
+          ZUKKA KEY <span id="appVersion">v4.3.0</span> · <span id="updateStatus">安定版</span>
         </p>
       </div>
       <button class="icon-button" id="installHelpBtn" aria-label="インストール方法">＋</button>
@@ -64,13 +64,13 @@
           <button class="text-button api-key-btn" id="apiKeyBtn">APIキー設定</button>
           <button class="text-button api-key-btn" id="rangeApiKeyBtn">音域API設定</button>
         </div>
-        <p class="api-status" id="apiStatus">GetSongKEYから原曲キー/BPMを取得し、保存済みの歌唱データと照合します。</p>
-        <p class="api-status" id="rangeSearchStatus">初めての曲はWEB音域検索を使います。<a href="https://jina.ai/api-dashboard/" target="_blank" rel="noopener" style="color:#83b8ff">Jina無料APIキー取得</a></p>
+        <p class="api-status" id="apiStatus">GetSongKEYから入力した歌手版のキー/BPMを取得し、保存済みの歌唱データと照合します。</p>
+        <p class="api-status" id="rangeSearchStatus">保存済み音域を最優先し、未登録の曲だけWEB音域検索を使います。<a href="https://jina.ai/api-dashboard/" target="_blank" rel="noopener" style="color:#83b8ff">Jina APIキー設定</a></p>
         <p class="api-status" id="rangeDiagnostic">WEB音域診断: 待機中</p>
 
         <div class="api-result hidden" id="apiResult">
           <div class="api-result-main">
-            <div><span>原曲キー（参考）</span><strong id="originalKey">—</strong></div>
+            <div><span>この歌手版キー（参考）</span><strong id="originalKey">—</strong></div>
             <div><span>BPM（参考）</span><strong id="originalBpm">—</strong></div>
           </div>
           <div class="stats-grid" style="margin-top:10px">
@@ -78,7 +78,7 @@
             <div class="stat"><span>ずっか判定</span><strong id="personalKeyStatus">—</strong></div>
           </div>
           <p class="api-status" id="rangeDataNote"></p>
-          <p class="api-status" id="metadataCaution">※ 原曲キー/BPMは曲候補確認用。ずっか判定は歌唱音域を中心に計算します。</p>
+          <p class="api-status" id="metadataCaution">※ キー/BPMは「入力した歌手版」の候補確認用。ずっか判定は歌唱音域と実測ログを中心に計算します。</p>
           <label class="api-candidates hidden" id="apiCandidatesWrap">検索候補
             <select id="apiCandidates"></select>
           </label>
@@ -195,10 +195,7 @@
     Song data by <a href="https://getsongbpm.com/" target="_blank" rel="noopener">GetSongBPM</a>
   </p>
 
-  <script src="app.js?v=4.2.7"></script>
-  <script src="hotfix.js?v=4.2.7"></script>
-  <script src="range-lookup.js?v=4.2.7"></script>
-  <script src="predictor-tune.js?v=4.2.7"></script>
-  <script src="updater.js?v=4.2.7"></script>
+  <script src="app.js?v=4.3.0"></script>
+  <script src="range-lookup.js?v=4.3.0"></script>
 </body>
 </html>

@@ -1,3 +1,4 @@
+const APP_VERSION='4.3.0';
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const STORAGE_KEY='zukka-key-data-v1';
 const RANGE_STORAGE='zukka-key-song-ranges-v1';
@@ -54,12 +55,30 @@ function artistNameOf(song){
   if(Array.isArray(a))return a.map(x=>x&&x.name).filter(Boolean).join(', ');
   return a.name||String(a);
 }
-function chooseBestSong(items,title,artistName){
+function songMatchScore(song,title,artistName){
   const nt=normalizeText(title),na=normalizeText(artistName);
-  return [...items].sort((a,b)=>{
-    const score=x=>{let z=0,xt=normalizeText(x.title),xa=normalizeText(artistNameOf(x));if(xt===nt)z+=10;else if(xt.includes(nt)||nt.includes(xt))z+=5;if(na){if(xa===na)z+=10;else if(xa.includes(na)||na.includes(xa))z+=5}return z};
-    return score(b)-score(a);
-  })[0];
+  const xt=normalizeText(song&&song.title),xa=normalizeText(artistNameOf(song));
+  if(!nt||!xt)return -Infinity;
+  let score=0;
+  if(xt===nt)score+=60;
+  else if(xt.includes(nt)||nt.includes(xt))score+=30;
+  else return -Infinity;
+
+  // Cover songs must match the requested artist. A title-only hit is never
+  // auto-selected when the user supplied an artist name.
+  if(na){
+    if(xa===na)score+=60;
+    else if(xa.includes(na)||na.includes(xa))score+=35;
+    else return -Infinity;
+  }
+  return score;
+}
+function chooseBestSong(items,title,artistName){
+  const ranked=[...items]
+    .map(song=>({song,score:songMatchScore(song,title,artistName)}))
+    .filter(x=>Number.isFinite(x.score))
+    .sort((a,b)=>b.score-a.score);
+  return ranked[0]?.song||null;
 }
 
 function findGoodLog(title,artistName){
@@ -120,9 +139,22 @@ async function autoLookup(){
     const res=await fetch(`${API_BASE}/search/?${params.toString()}`,{method:'GET',mode:'cors',cache:'no-store'});if(!res.ok)throw new Error(`HTTP ${res.status}`);
     const payload=await res.json();const items=Array.isArray(payload.search)?payload.search:[];
     if(!items.length){apiResult.classList.add('hidden');resultCard.classList.add('hidden');apiStatus.textContent='一致する曲が見つかりませんでした。アーティスト名も入れて再検索してください。';return}
-    const best=chooseBestSong(items,title,artistName);renderApiCandidates(items,best&&best.id);renderApiCandidate(best||items[0]);
+    const best=chooseBestSong(items,title,artistName);
+    renderApiCandidates(items,best&&best.id);
+    if(!best){
+      lastApiSong=null;
+      apiResult.classList.remove('hidden');
+      originalKey.textContent='—';originalBpm.textContent='—';
+      rangeDataStatus.textContent='歌手確認待ち';rangeDataStatus.className='warn';
+      personalKeyStatus.textContent='判定保留';personalKeyStatus.className='warn';
+      rangeDataNote.textContent='同名曲は見つかりましたが、入力したアーティスト版と確認できません。カバー曲の取り違え防止のため自動採用しません。';
+      resultCard.classList.add('hidden');
+      apiStatus.textContent='曲名は見つかりましたが、指定したアーティスト版を確認できませんでした。検索候補を確認するか、表記を調整してください。';
+      return;
+    }
+    renderApiCandidate(best);
     const known=findGoodLog(songTitle.value,artist.value),range=findRangeData(songTitle.value,artist.value);
-    apiStatus.textContent=known?'過去の歌唱実績を発見。実測キーを最優先で表示しました。':range?'原曲データ＋保存済み音域から、ずっか推奨キーまで自動判定しました。':'原曲キー/BPMは取得済み。音域は未登録なので、下の4項目を確認して保存すると次回から完全自動になります。';
+    apiStatus.textContent=known?'過去の歌唱実績を発見。実測キーを最優先で表示しました。':range?'歌手版データ＋保存済み音域から、ずっか推奨キーまで自動判定しました。':'歌手版キー/BPMは取得済み。音域は未登録なので、WEB音域検索または手入力で続行します。';
   }catch(err){console.error(err);apiStatus.textContent='自動取得に失敗しました。APIキーまたは通信状態を確認してください。';}
   finally{autoLookupBtn.disabled=false;autoLookupBtn.textContent='曲データ取得 → ずっか判定'}
 }
@@ -134,7 +166,7 @@ function candidateScore(song,shift){
   if(peak>=p.caution)score-=(peak-p.caution+1)*(density>=4?13:8);if(low<p.minComfortLow)score-=(p.minComfortLow-low)*7;
   if(song.falsetto!=null){const f=song.falsetto+shift;if(f>74)score-=(f-74)*2.5}score-=Math.abs(shift)*1.2;
   const good=data.logs.filter(l=>l.rating>=4&&Number.isFinite(l.chorus)&&Number.isFinite(l.peak));
-  if(good.length){let totalW=0,weighted=0;for(const l of good){const originalChorus=l.chorus-l.shift,originalPeak=l.peak-l.shift;const dist=Math.abs(song.chorus-originalChorus)*1.2+Math.abs(song.peak-originalPeak)*1.6+Math.abs(song.low-(l.low-l.shift))*.35+Math.abs(song.density-(l.density||3))*.8;const w=(l.rating-2)/Math.pow(1+dist,1.35);totalW+=w;weighted+=w*l.shift}if(totalW>0){const learned=weighted/totalW;score-=Math.abs(shift-learned)*3.2}}
+  if(good.length){let totalW=0,weighted=0;for(const l of good){const originalChorus=l.chorus-l.shift,originalPeak=l.peak-l.shift;const dist=Math.abs(song.chorus-originalChorus)*1.2+Math.abs(song.peak-originalPeak)*1.6+Math.abs(song.low-(l.low-l.shift))*.35+Math.abs(song.density-(l.density||3))*.8;const w=(l.rating-2)/Math.pow(1+dist,1.35);totalW+=w;weighted+=w*l.shift}if(totalW>0){const learned=weighted/totalW;score-=Math.abs(shift-learned)*(good.length>=5?6.5:4.5)}}
   return score;
 }
 function predict(song){const list=[];for(let s=-6;s<=6;s++)list.push({shift:s,score:candidateScore(song,s)});list.sort((a,b)=>b.score-a.score);return list.slice(0,3)}
@@ -150,13 +182,13 @@ function runPrediction(opts={}){
   if(confirmedLog){const confirmed={shift:Number(confirmedLog.shift),score:999};top=[confirmed,...top.filter(x=>x.shift!==confirmed.shift)].slice(0,3)}
   lastPrediction={song,top};bestKey.textContent=shiftLabel(top[0].shift);resultTitle.textContent=confirmedLog?`実測ベスト ${shiftLabel(top[0].shift)}`:`おすすめは ${shiftLabel(top[0].shift)}`;resultReason.textContent=buildReason(song,top[0],confirmedLog);
   alternatives.innerHTML=top.slice(1).map((x,i)=>`<div class="alt"><span>${i===0?'次点':'第3候補'}</span><strong>${shiftLabel(x.shift)}</strong></div>`).join('');
-  const meta=[];if(lastApiSong&&songIdentity(lastApiSong.title,artistNameOf(lastApiSong))===songIdentity(song.title,song.artist)){if(lastApiSong.key_of)meta.push(`原曲 ${lastApiSong.key_of}`);if(lastApiSong.tempo)meta.push(`${lastApiSong.tempo} BPM`)}meta.push(`音域: ${currentRangeSource==='manual'?'手入力':currentRangeSource}`);resultMeta.textContent=meta.join(' / ');
+  const meta=[];if(lastApiSong&&songIdentity(lastApiSong.title,artistNameOf(lastApiSong))===songIdentity(song.title,song.artist)){if(lastApiSong.key_of)meta.push(`歌手版 ${lastApiSong.key_of}`);if(lastApiSong.tempo)meta.push(`${lastApiSong.tempo} BPM`)}meta.push(`音域: ${currentRangeSource==='manual'?'手入力':currentRangeSource}`);resultMeta.textContent=meta.join(' / ');
   resultCard.classList.remove('hidden');personalKeyStatus.textContent=shiftLabel(top[0].shift);personalKeyStatus.className='ok';if(opts.scroll!==false)resultCard.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 
 function saveCurrentRange(){
   const title=songTitle.value.trim(),artistName=artist.value.trim();if(!title){alert('先に曲名を入れてください');return}
-  const s=currentSongFromForm();const id=songIdentity(title,artistName);rangeLibrary[id]={chorus:s.chorus,peak:s.peak,falsetto:s.falsetto,low:s.low,density:s.density,source:'このiPhoneに保存',confidence:'確認済み',title,artist:artistName};saveRanges();setRangeUi(rangeLibrary[id]);apiStatus.textContent='この曲の音域を保存しました。次回から曲名検索だけで推奨キーまで自動判定できます。';runPrediction();
+  const s=currentSongFromForm();const id=songIdentity(title,artistName);rangeLibrary[id]={chorus:s.chorus,peak:s.peak,falsetto:s.falsetto,low:s.low,density:s.density,source:'手動確認済み',confidence:'高',sourceQuality:100,manualConfirmed:true,savedAt:new Date().toISOString(),title,artist:artistName};saveRanges();setRangeUi(rangeLibrary[id]);apiStatus.textContent='この曲の音域を保存しました。次回から曲名検索だけで推奨キーまで自動判定できます。';runPrediction();
 }
 function addLogFromForm(){
   const title=logTitle.value.trim();if(!title){alert('曲名を入れてください');return}const shift=+logShift.value;
@@ -176,9 +208,11 @@ function refreshProfile(){
 function refreshAll(){renderLogs();refreshProfile();}
 function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 function switchTab(name){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));document.querySelectorAll('.tab-panel').forEach(x=>x.classList.remove('active'));document.getElementById(name+'Panel').classList.add('active');window.scrollTo({top:0,behavior:'smooth'})}
-function exportData(){const payload={app:'ZUKKA KEY',version:3,data,rangeLibrary};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='zukka-key-backup-v3.json';a.click();URL.revokeObjectURL(a.href)}
+function exportData(){const payload={app:'ZUKKA KEY',version:4,data,rangeLibrary};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='zukka-key-backup-v4.json';a.click();URL.revokeObjectURL(a.href)}
 function importData(file){const r=new FileReader();r.onload=()=>{try{const v=JSON.parse(r.result);if(v.data&&v.data.logs){data=v.data;rangeLibrary=v.rangeLibrary||{};}else if(v.logs){data=v;}else throw new Error();localStorage.setItem(STORAGE_KEY,JSON.stringify(data));saveRanges();refreshAll();alert('復元しました')}catch{alert('バックアップファイルを読み込めませんでした')}};r.readAsText(file)}
 
+if(document.getElementById('appVersion'))document.getElementById('appVersion').textContent='v'+APP_VERSION;
+if(document.getElementById('updateStatus'))document.getElementById('updateStatus').textContent='安定版';
 setupSelects();refreshAll();
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.tab));predictBtn.onclick=()=>runPrediction();saveRangeBtn.onclick=saveCurrentRange;addLogBtn.onclick=addLogFromForm;saveTrialBtn.onclick=savePredictedTrial;autoLookupBtn.onclick=autoLookup;apiKeyBtn.onclick=setApiKey;
 highDensity.oninput=()=>densityLabel.textContent=['','少ない','やや少ない','普通','多い','かなり多い'][+highDensity.value];
