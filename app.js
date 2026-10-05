@@ -1,4 +1,4 @@
-const APP_VERSION='4.3.0';
+const APP_VERSION='4.3.1';
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const STORAGE_KEY='zukka-key-data-v1';
 const RANGE_STORAGE='zukka-key-song-ranges-v1';
@@ -34,10 +34,17 @@ function noteName(midi){if(midi===null||midi===undefined||midi==='')return 'な�
 function shiftLabel(v){v=Number(v);return v===0?'±0':v>0?`+${v}`:`${v}`}
 function normalizeText(v){return String(v||'').normalize('NFKC').toLowerCase().replace(/[\s　・･\-–—_・「」『』()（）]/g,'')}
 function songIdentity(title,artistName){return `${normalizeText(artistName)}::${normalizeText(title)}`}
-function populateNoteSelect(el,min=43,max=76,none=false,selected=null){el.innerHTML='';if(none){const o=document.createElement('option');o.value='';o.textContent='なし';el.append(o)}for(let i=min;i<=max;i++){const o=document.createElement('option');o.value=i;o.textContent=noteName(i);if(Number(selected)===i)o.selected=true;el.append(o)}if(selected===null&&!none)el.value=67;}
+function populateNoteSelect(el,min=43,max=76,none=false,selected=null,placeholder=false){
+  el.innerHTML='';
+  if(placeholder&&!none){const o=document.createElement('option');o.value='';o.textContent='選択してください';el.append(o)}
+  if(none){const o=document.createElement('option');o.value='';o.textContent='なし';el.append(o)}
+  for(let i=min;i<=max;i++){const o=document.createElement('option');o.value=i;o.textContent=noteName(i);if(selected!==null&&Number(selected)===i)o.selected=true;el.append(o)}
+  if(selected===null&&!none)el.value=placeholder?'':String(Math.min(max,Math.max(min,67)));
+}
 function populateShifts(){const el=document.getElementById('logShift');el.innerHTML='';for(let i=-6;i<=6;i++){const o=document.createElement('option');o.value=i;o.textContent=shiftLabel(i);el.append(o)}}
 function setupSelects(){
-  populateNoteSelect(chorusTop,55,73,false,66);populateNoteSelect(chestPeak,55,76,false,67);populateNoteSelect(falsettoPeak,55,79,true,null);populateNoteSelect(lowNote,40,60,false,48);
+  // New songs start blank: default notes must never be mistaken for real song data.
+  populateNoteSelect(chorusTop,55,73,false,null,true);populateNoteSelect(chestPeak,55,76,false,null,true);populateNoteSelect(falsettoPeak,55,79,true,null);populateNoteSelect(lowNote,40,60,false,null,true);
   populateNoteSelect(logChorus,55,73,false,66);populateNoteSelect(logPeak,55,76,false,67);populateNoteSelect(logFalsetto,55,79,true,null);populateNoteSelect(logLow,40,60,false,48);populateShifts();
 }
 
@@ -111,6 +118,9 @@ function setRangeUi(range){
     rangeSourceBadge.textContent='手入力';currentRangeSource='manual';
   }
 }
+function rangeFormComplete(){return chorusTop.value!==''&&chestPeak.value!==''&&lowNote.value!=='';}
+function clearRangeForm(){chorusTop.value='';chestPeak.value='';falsettoPeak.value='';lowNote.value='';highDensity.value='3';highDensity.oninput();rangeSourceBadge.textContent='手入力待ち';currentRangeSource='manual';}
+function setPredictionPending(label='音域待ち'){personalKeyStatus.textContent=label;personalKeyStatus.className='warn';resultCard.classList.add('hidden');bestKey.textContent='—';resultTitle.textContent='音域を入力すると判定できます';resultReason.textContent='';alternatives.innerHTML='';lastPrediction=null;}
 function renderApiCandidate(song){
   if(!song)return;
   lastApiSong=song;
@@ -121,7 +131,7 @@ function renderApiCandidate(song){
   const known=findGoodLog(song.title,an);
   if(known){personalKeyStatus.textContent=shiftLabel(known.shift);personalKeyStatus.className='ok';runPrediction({confirmedLog:known,scroll:false});}
   else if(range){runPrediction({scroll:false});personalKeyStatus.textContent=bestKey.textContent;personalKeyStatus.className='ok';}
-  else{personalKeyStatus.textContent='音域待ち';personalKeyStatus.className='warn';resultCard.classList.add('hidden');}
+  else{clearRangeForm();setPredictionPending('音域待ち');}
 }
 function renderApiCandidates(items,selectedId){
   apiCandidates.innerHTML='';
@@ -146,7 +156,7 @@ async function autoLookup(){
       apiResult.classList.remove('hidden');
       originalKey.textContent='—';originalBpm.textContent='—';
       rangeDataStatus.textContent='歌手確認待ち';rangeDataStatus.className='warn';
-      personalKeyStatus.textContent='判定保留';personalKeyStatus.className='warn';
+      setPredictionPending('判定保留');
       rangeDataNote.textContent='同名曲は見つかりましたが、入力したアーティスト版と確認できません。カバー曲の取り違え防止のため自動採用しません。';
       resultCard.classList.add('hidden');
       apiStatus.textContent='曲名は見つかりましたが、指定したアーティスト版を確認できませんでした。検索候補を確認するか、表記を調整してください。';
@@ -176,9 +186,11 @@ function buildReason(song,best,confirmedLog=null){
   if(song.density>=4)bits.push('高音が多い曲なので、ピークを少し余裕側に置いています。');else if(song.density<=2)bits.push('高音が一瞬型なので、ピークはG4付近まで許容しています。');
   if(song.falsetto!=null)bits.push(`裏声の ${noteName(song.falsetto+s)} は別枠として軽く評価しています。`);if(l<48)bits.push('低音がかなり下がるので、低く感じたら次点も試してください。');return bits.join(' ');
 }
-function currentSongFromForm(){return {title:songTitle.value.trim()||'この曲',artist:artist.value.trim(),chorus:+chorusTop.value,peak:+chestPeak.value,falsetto:falsettoPeak.value===''?null:+falsettoPeak.value,low:+lowNote.value,density:+highDensity.value}}
+function currentSongFromForm(){return {title:songTitle.value.trim()||'この曲',artist:artist.value.trim(),chorus:chorusTop.value===''?null:+chorusTop.value,peak:chestPeak.value===''?null:+chestPeak.value,falsetto:falsettoPeak.value===''?null:+falsettoPeak.value,low:lowNote.value===''?null:+lowNote.value,density:+highDensity.value}}
 function runPrediction(opts={}){
-  const song=currentSongFromForm();let top=predict(song);const confirmedLog=opts.confirmedLog||findGoodLog(song.title,song.artist);
+  const song=currentSongFromForm();const confirmedLog=opts.confirmedLog||findGoodLog(song.title,song.artist);
+  if(!confirmedLog&&!rangeFormComplete()){setPredictionPending('音域待ち');if(opts.silent!==true)apiStatus.textContent='おすすめキーを出すには、サビ高音・地声最高音・最低音を入力してください。';return null;}
+  let top=predict(song);
   if(confirmedLog){const confirmed={shift:Number(confirmedLog.shift),score:999};top=[confirmed,...top.filter(x=>x.shift!==confirmed.shift)].slice(0,3)}
   lastPrediction={song,top};bestKey.textContent=shiftLabel(top[0].shift);resultTitle.textContent=confirmedLog?`実測ベスト ${shiftLabel(top[0].shift)}`:`おすすめは ${shiftLabel(top[0].shift)}`;resultReason.textContent=buildReason(song,top[0],confirmedLog);
   alternatives.innerHTML=top.slice(1).map((x,i)=>`<div class="alt"><span>${i===0?'次点':'第3候補'}</span><strong>${shiftLabel(x.shift)}</strong></div>`).join('');
@@ -188,6 +200,7 @@ function runPrediction(opts={}){
 
 function saveCurrentRange(){
   const title=songTitle.value.trim(),artistName=artist.value.trim();if(!title){alert('先に曲名を入れてください');return}
+  if(!rangeFormComplete()){alert('サビ高音・地声最高音・最低音を入力してください。');setPredictionPending('音域待ち');return}
   const s=currentSongFromForm();const id=songIdentity(title,artistName);rangeLibrary[id]={chorus:s.chorus,peak:s.peak,falsetto:s.falsetto,low:s.low,density:s.density,source:'手動確認済み',confidence:'高',sourceQuality:100,manualConfirmed:true,savedAt:new Date().toISOString(),title,artist:artistName};saveRanges();setRangeUi(rangeLibrary[id]);apiStatus.textContent='この曲の音域を保存しました。次回から曲名検索だけで推奨キーまで自動判定できます。';runPrediction();
 }
 function addLogFromForm(){
@@ -216,7 +229,7 @@ if(document.getElementById('updateStatus'))document.getElementById('updateStatus
 setupSelects();refreshAll();
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.tab));predictBtn.onclick=()=>runPrediction();saveRangeBtn.onclick=saveCurrentRange;addLogBtn.onclick=addLogFromForm;saveTrialBtn.onclick=savePredictedTrial;autoLookupBtn.onclick=autoLookup;apiKeyBtn.onclick=setApiKey;
 highDensity.oninput=()=>densityLabel.textContent=['','少ない','やや少ない','普通','多い','かなり多い'][+highDensity.value];
-[songTitle,artist,chorusTop,chestPeak,falsettoPeak,lowNote,highDensity].forEach(el=>el.addEventListener('change',()=>{if(el===chorusTop||el===chestPeak||el===falsettoPeak||el===lowNote||el===highDensity){rangeSourceBadge.textContent='手入力';currentRangeSource='manual';}}));
+[songTitle,artist,chorusTop,chestPeak,falsettoPeak,lowNote,highDensity].forEach(el=>el.addEventListener('change',()=>{if(el===chorusTop||el===chestPeak||el===falsettoPeak||el===lowNote||el===highDensity){rangeSourceBadge.textContent='手入力';currentRangeSource='manual';if(rangeFormComplete()){personalKeyStatus.textContent='判定待ち';personalKeyStatus.className='warn';}else{setPredictionPending('音域待ち');}}}));
 sampleBtn.onclick=()=>{songTitle.value='会いたい';artist.value='徳永英明';};installHelpBtn.onclick=()=>installDialog.showModal();closeDialog.onclick=()=>installDialog.close();exportBtn.onclick=exportData;importInput.onchange=e=>e.target.files[0]&&importData(e.target.files[0]);
 resetBtn.onclick=()=>{if(confirm('追加した学習データと保存した曲別音域を消して初期状態に戻しますか？')){data=clone(defaultData);rangeLibrary={};localStorage.removeItem(RANGE_STORAGE);saveData()}};
 if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(r=>r.update()).catch(()=>{}));

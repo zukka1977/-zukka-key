@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.3.0';
+  const VERSION = '4.3.1';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
   const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v1';
@@ -379,8 +379,18 @@ ${content}`;
     state[lookupIdentity(title,artist)]={reason,until:Date.now()+minutes*60*1000};
     writeLookupState(state);
   }
+  function blockGlobalLookup(reason,minutes){
+    const state=readLookupState();
+    state.__global__={reason,until:Date.now()+minutes*60*1000};
+    writeLookupState(state);
+  }
   function lookupBlock(title,artist){
     const state=readLookupState();
+    const globalRow=state.__global__;
+    if(globalRow){
+      if(Number(globalRow.until)>Date.now())return globalRow;
+      delete state.__global__;writeLookupState(state);
+    }
     const key=lookupIdentity(title,artist);
     const row=state[key];
     if(!row)return null;
@@ -654,6 +664,16 @@ ${content}`;
     if(card)card.classList.add('hidden');
   }
 
+  function markPending(label='音域待ち'){
+    try{
+      if(typeof setPredictionPending==='function'){setPredictionPending(label);return;}
+    }catch(_){}
+    const ps=document.getElementById('personalKeyStatus');
+    const card=document.getElementById('resultCard');
+    if(ps){ps.textContent=label;ps.className='warn';}
+    if(card)card.classList.add('hidden');
+  }
+
   btn.onclick=async function(event){
     const titleEl=document.getElementById('songTitle');
     const artistEl=document.getElementById('artist');
@@ -693,6 +713,7 @@ ${content}`;
 
     const blocked=lookupBlock(title,artist);
     if(blocked){
+      markPending('音域待ち');
       diag(blocked.reason==='quota'?'利用上限・再試行待ち':'直近検索を再利用');
       if(statusEl)statusEl.textContent=blocked.reason==='quota'
         ? 'WEB音域検索は利用上限のため一時停止中です。キー/BPMはそのまま使えます。手入力で判定を続けられます。'
@@ -701,6 +722,7 @@ ${content}`;
     }
 
     if(!getJinaKey()){
+      markPending('音域待ち');
       diag('音域APIキー未設定');
       if(statusEl)statusEl.textContent='「音域API設定」でJina APIキーを登録してください。';
       return;
@@ -715,6 +737,7 @@ ${content}`;
       const found=await searchRange(title,artist);
 
       if(!found.range){
+        markPending('音域待ち');
         blockLookup(title,artist,'no-result',360);
         diag(`一致データなし（検索結果 ${found.count||0}件）`);
         if(statusEl)statusEl.textContent=
@@ -738,12 +761,13 @@ ${content}`;
         (found.range.oneOffPeak ? '（最高音は1回型）' : '');
     }catch(err){
       console.error(err);
+      markPending('音域待ち');
       const msg=String(err?.message||'');
       if(msg==='JINA_AUTH'){
         diag('Jina認証エラー');
         if(statusEl)statusEl.textContent='Jina APIキーが無効です。「音域API設定」から入れ直してください。';
       }else if(msg==='JINA_QUOTA'){
-        blockLookup(title,artist,'quota',30);
+        blockGlobalLookup('quota',720);
         diag('Jina利用上限');
         if(statusEl)statusEl.textContent='WEB音域検索の利用上限に達しました。キー/BPMは取得済みのまま残します。音域を手入力すれば判定を続けられます。';
       }else if(msg==='JINA_RATE_LIMIT'){
@@ -768,5 +792,5 @@ ${content}`;
     ? 'WEB音域検索：準備OK（複数ソース精査モード）'
     : '初めての曲はWEB音域検索を使います。音域APIキーは未設定です。';
 
-  diag(getJinaKey()?'準備OK v4.3.0':'APIキー未設定');
+  diag(getJinaKey()?'準備OK v4.3.1':'APIキー未設定');
 })();
