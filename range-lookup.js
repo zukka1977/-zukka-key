@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.4.2';
+  const VERSION = '4.4.3';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
   const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v2';
@@ -144,8 +144,10 @@ ${content}`;
   }
 
   function noteFromLabels(content, labels, reject=[]) {
+    const ls=lines(content);
     for (const label of labels) {
-      for (const line of lines(content)) {
+      for (let i=0;i<ls.length;i++) {
+        const line=ls[i];
         const idx=line.indexOf(label);
         if (idx<0) continue;
 
@@ -153,10 +155,18 @@ ${content}`;
         const local=line.slice(Math.max(0,idx-24), Math.min(line.length,idx+120));
         if (reject.some(x => local.includes(x))) continue;
 
-        // Search AFTER the label. Search-result snippets often contain
-        // 最低音 / 地声最高音 / 裏声最高音 in the same single line.
-        const after=line.slice(idx+label.length, idx+label.length+100);
-        const m=after.match(tokenRe);
+        // Some sources (notably KeyTube via Reader) put the value on the
+        // NEXT line: "最低音\nmid1D (D3)". Search the label line plus the
+        // following 3 lines, but stop before another known label to avoid
+        // accidentally grabbing 最高音 when looking for 最低音.
+        const first=line.slice(idx+label.length);
+        const nearby=[first];
+        for(let j=i+1;j<Math.min(ls.length,i+4);j++){
+          const next=ls[j];
+          if(j>i+1 && /最低音|最高音|地声最高音|裏声最高音|最頻音|平均値|安定音域/.test(next)) break;
+          nearby.push(next);
+        }
+        const m=nearby.join(' ').match(tokenRe);
         if(m){
           const midi=tokenToMidi(m[0]);
           if(Number.isFinite(midi))return midi;
@@ -167,12 +177,19 @@ ${content}`;
   }
 
   function rangeFromLabels(content, labels) {
+    const ls=lines(content);
     for (const label of labels) {
-      for (const line of lines(content)) {
+      for (let i=0;i<ls.length;i++) {
+        const line=ls[i];
         const idx=line.indexOf(label);
         if(idx<0)continue;
-        const after=line.slice(idx+label.length, idx+label.length+140);
-        const xs=allTokens(after);
+        const nearby=[line.slice(idx+label.length)];
+        for(let j=i+1;j<Math.min(ls.length,i+5);j++){
+          const next=ls[j];
+          if(j>i+1 && /最低音|最高音|地声最高音|裏声最高音|最頻音|平均値/.test(next)) break;
+          nearby.push(next);
+        }
+        const xs=allTokens(nearby.join(' '));
         if(xs.length>=2)return [xs[0].midi,xs[1].midi];
       }
     }
@@ -949,11 +966,11 @@ ${content}`;
     btn.textContent='無料音域検索中…';
     if(statusEl)statusEl.textContent='保存データ → 無料WEB検索 → 必要な時だけ有料検索API、の順で探しています…';
 
+    let freeFound=null;
     try{
       // v4.4: paid Jina Search is no longer the primary path.
       // First discover/fetch source pages with direct CORS where possible,
       // falling back to the unauthenticated Reader endpoint only when needed.
-      let freeFound=null;
       try{freeFound=await searchRangeFree(title,artist);}catch(err){freeFound={range:null,lastFreeError:String(err?.message||'')};}
 
       if(freeFound?.range){
@@ -976,7 +993,10 @@ ${content}`;
       if(!paidKey || paidBlock){
         markPending('音域待ち');
         const suffix=paidBlock?'有料検索APIは利用上限のため休止中です。':'必要なら「予備検索API設定」で有料検索を追加できます。';
-        const freeDiag=freeFound?.lastFreeError?.includes('RATE_LIMIT')?'無料Reader混雑':'無料検索で一致データなし';
+        const fetched=(freeFound?.directHits||0)+(freeFound?.readerHits||0);
+        const freeDiag=freeFound?.lastFreeError?.includes('RATE_LIMIT')
+          ? `無料Reader混雑 / 候補URL ${freeFound?.discovered||0}件`
+          : `無料検索：候補URL ${freeFound?.discovered||0}件 / 詳細取得 ${fetched}件 / 解析候補 ${freeFound?.candidates?.length||0}件`;
         diag(freeDiag);
         if(statusEl)statusEl.textContent=`無料検索では歌手版まで確認できる音域が見つかりませんでした。${suffix} 手入力ならそのまま判定できます。`;
         // Do not block on transient Reader errors. Only cache a true no-result.
@@ -1020,7 +1040,11 @@ ${content}`;
         diag('予備検索API混雑');
         if(statusEl)statusEl.textContent='予備検索APIが混み合っています。無料検索は利用できます。数分後に再試行するか、手入力で続けてください。';
       }else{
-        diag('音域検索エラー');
+        const fetched=(typeof freeFound!=='undefined'&&freeFound)?((freeFound.directHits||0)+(freeFound.readerHits||0)):0;
+        const extra=(typeof freeFound!=='undefined'&&freeFound)
+          ? `無料候補URL ${freeFound.discovered||0}件 / 詳細取得 ${fetched}件 / 解析 ${freeFound.candidates?.length||0}件`
+          : '無料検索情報なし';
+        diag(`音域検索エラー / ${extra}`);
         if(statusEl)statusEl.textContent='音域検索に失敗しました。キー/BPMは残しています。無料検索は次回も試せます。手入力でも判定できます。';
       }
     }finally{
@@ -1033,5 +1057,5 @@ ${content}`;
     ? '音域検索：無料WEB優先 / 予備検索APIも準備OK'
     : '音域検索：無料WEB優先。予備検索APIは未設定でも使えます。';
 
-  diag(getJinaKey()?'無料優先モード v4.4.1 / 予備APIあり':'無料優先モード v4.4.1');
+  diag(getJinaKey()?'無料優先モード v4.4.3 / 予備APIあり':'無料優先モード v4.4.3');
 })();
