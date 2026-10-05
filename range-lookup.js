@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.4.3';
+  const VERSION = '4.4.4';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
   const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v2';
@@ -596,10 +596,55 @@ ${content}`;
     return {urls:urlsFromSearchPayload(got.text),via:got.via};
   }
 
+  function looksLikeHtml(text){
+    const s=String(text||'').slice(0,2000).toLowerCase();
+    return /<!doctype\s+html|<html\b|<body\b|<main\b|<div\b|<section\b/.test(s);
+  }
+
+  function htmlToReadableText(html){
+    let raw=String(html||'');
+    if(!looksLikeHtml(raw))return raw;
+
+    // Direct CORS fetches return raw HTML while Reader returns plain text.
+    // The range parsers are intentionally text-based, so normalize both routes
+    // into the same readable-text shape before identity/range extraction.
+    raw=raw
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,' ')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,' ')
+      .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi,' ')
+      .replace(/<br\s*\/?>/gi,'\n')
+      .replace(/<\/(?:p|div|section|article|li|tr|td|th|h[1-6]|dt|dd|header|footer|main|nav|table|ul|ol)>/gi,'\n')
+      .replace(/<[^>]+>/g,' ');
+
+    // Decode entities in-browser without depending on an external library.
+    try{
+      const ta=document.createElement('textarea');
+      ta.innerHTML=raw;
+      raw=ta.value;
+    }catch(_){
+      raw=raw
+        .replace(/&nbsp;/gi,' ')
+        .replace(/&amp;/gi,'&')
+        .replace(/&lt;/gi,'<')
+        .replace(/&gt;/gi,'>')
+        .replace(/&quot;/gi,'"')
+        .replace(/&#39;|&apos;/gi,"'");
+    }
+
+    return raw
+      .replace(/[\t\f\v]+/g,' ')
+      .replace(/ *\n */g,'\n')
+      .replace(/\n{3,}/g,'\n\n')
+      .replace(/ {2,}/g,' ')
+      .trim();
+  }
+
   async function freePageItem(url){
     const got=await directOrReaderText(url);
-    const first=String(got.text||'').split(/\r?\n/).find(x=>x.trim())||'';
-    return {url,title:first.slice(0,180),content:got.text,_via:got.via};
+    const raw=String(got.text||'');
+    const content=htmlToReadableText(raw);
+    const first=content.split(/\r?\n/).find(x=>x.trim())||'';
+    return {url,title:first.slice(0,180),content,_via:got.via,_rawHtml:looksLikeHtml(raw)};
   }
 
   async function searchRangeFree(title,artist){
@@ -619,6 +664,9 @@ ${content}`;
     let discovered=0;
     let directHits=0;
     let readerHits=0;
+    let htmlNormalized=0;
+    let identityHits=0;
+    let parseAttempts=0;
     let lastFreeError='';
 
     async function inspectUrls(urls){
@@ -629,8 +677,11 @@ ${content}`;
         let item;
         try{item=await freePageItem(url);}catch(err){lastFreeError=String(err?.message||'');continue;}
         if(item._via==='direct')directHits++;else readerHits++;
+        if(item._rawHtml)htmlNormalized++;
         const evidence=identityEvidence(item,title,artist);
         if(evidence < (artist ? 30 : 20))continue;
+        identityHits++;
+        parseAttempts++;
         const parsed=parseAny(item,title,artist);
         if(!parsed)continue;
         let score=Number(parsed.sourceQuality||0)+evidence;
@@ -667,7 +718,7 @@ ${content}`;
 
     candidates.sort((a,b)=>b._score-a._score);
     const reliable=candidates.filter(x=>Number(x.sourceQuality)>=65&&Number(x.identityScore)>=30);
-    return {range:reliable[0]||null,candidates,discovered,directHits,readerHits,lastFreeError};
+    return {range:reliable[0]||null,candidates,discovered,directHits,readerHits,htmlNormalized,identityHits,parseAttempts,lastFreeError};
   }
 
   async function jinaSearch(query,key) {
@@ -996,7 +1047,7 @@ ${content}`;
         const fetched=(freeFound?.directHits||0)+(freeFound?.readerHits||0);
         const freeDiag=freeFound?.lastFreeError?.includes('RATE_LIMIT')
           ? `無料Reader混雑 / 候補URL ${freeFound?.discovered||0}件`
-          : `無料検索：候補URL ${freeFound?.discovered||0}件 / 詳細取得 ${fetched}件 / 解析候補 ${freeFound?.candidates?.length||0}件`;
+          : `無料検索：候補URL ${freeFound?.discovered||0}件 / 詳細取得 ${fetched}件 / HTML整形 ${freeFound?.htmlNormalized||0}件 / 歌手一致 ${freeFound?.identityHits||0}件 / 解析成功 ${freeFound?.candidates?.length||0}件`;
         diag(freeDiag);
         if(statusEl)statusEl.textContent=`無料検索では歌手版まで確認できる音域が見つかりませんでした。${suffix} 手入力ならそのまま判定できます。`;
         // Do not block on transient Reader errors. Only cache a true no-result.
@@ -1042,7 +1093,7 @@ ${content}`;
       }else{
         const fetched=(typeof freeFound!=='undefined'&&freeFound)?((freeFound.directHits||0)+(freeFound.readerHits||0)):0;
         const extra=(typeof freeFound!=='undefined'&&freeFound)
-          ? `無料候補URL ${freeFound.discovered||0}件 / 詳細取得 ${fetched}件 / 解析 ${freeFound.candidates?.length||0}件`
+          ? `無料候補URL ${freeFound.discovered||0}件 / 詳細取得 ${fetched}件 / HTML整形 ${freeFound.htmlNormalized||0}件 / 歌手一致 ${freeFound.identityHits||0}件 / 解析成功 ${freeFound.candidates?.length||0}件`
           : '無料検索情報なし';
         diag(`音域検索エラー / ${extra}`);
         if(statusEl)statusEl.textContent='音域検索に失敗しました。キー/BPMは残しています。無料検索は次回も試せます。手入力でも判定できます。';
@@ -1057,5 +1108,5 @@ ${content}`;
     ? '音域検索：無料WEB優先 / 予備検索APIも準備OK'
     : '音域検索：無料WEB優先。予備検索APIは未設定でも使えます。';
 
-  diag(getJinaKey()?'無料優先モード v4.4.3 / 予備APIあり':'無料優先モード v4.4.3');
+  diag(getJinaKey()?'無料優先モード v4.4.4 / 予備APIあり':'無料優先モード v4.4.4');
 })();

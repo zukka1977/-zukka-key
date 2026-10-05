@@ -1,12 +1,12 @@
-const CACHE='zukka-key-v4.4.3';
+const CACHE='zukka-key-v4.4.4';
 const CORE_ASSETS=[
   './','./index.html',
-  './styles.css?v=4.4.3',
-  './app.js?v=4.4.3',
-  './range-lookup.js?v=4.4.3'
+  './styles.css?v=4.4.4',
+  './app.js?v=4.4.4',
+  './range-lookup.js?v=4.4.4'
 ];
 const OPTIONAL_ASSETS=[
-  './manifest.webmanifest?v=4.4.3',
+  './manifest.webmanifest?v=4.4.4',
   './icon-180.png','./icon-192.png','./icon-512.png'
 ];
 
