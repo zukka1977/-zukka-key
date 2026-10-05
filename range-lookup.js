@@ -1,8 +1,8 @@
 (() => {
-  const VERSION = '4.4.0';
+  const VERSION = '4.4.1';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
-  const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v1';
+  const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v2';
 
   const btn = document.getElementById('autoLookupBtn');
   const keyBtn = document.getElementById('rangeApiKeyBtn');
@@ -20,7 +20,15 @@
 
   // Artist names often have harmless notation differences:
   // ポルノグラフィティ / ポルノグラフィティー, etc.
-  const artistNorm = (v) => norm(v).replace(/[ーｰ]/g,'');
+  // Some music databases also use old/variant kanji (徳永 / 德永, 高 / 髙).
+  // Normalize a small, conservative set so the correct cover is not rejected.
+  const artistNorm = (v) => norm(v)
+    .replace(/[ーｰ]/g,'')
+    .replace(/德/g,'徳')
+    .replace(/髙/g,'高')
+    .replace(/﨑/g,'崎')
+    .replace(/神/g,'神')
+    .replace(/﨑/g,'崎');
   const artistQueryVariants = (v) => {
     const raw=String(v||'').trim();
     const vars=[raw, raw.replace(/[ーｰ]+$/g,'')].filter(Boolean);
@@ -328,6 +336,42 @@ ${content}`;
     });
   }
 
+  function parseKeyTube(item, title, artist) {
+    const url = String(item.url || '');
+    const content = String(item.content || '');
+    if (!/keytube\.net\/song\/detail\//i.test(url)) return null;
+    if (!containsIdentity(item,title,artist)) return null;
+
+    const low = noteFromLabels(content, ['最低音']);
+    const peak = noteFromLabels(content, ['最高音']);
+    const common = noteFromLabels(content, ['最も多く使われている音程','最頻音']);
+    if (!Number.isFinite(low) || !Number.isFinite(peak)) return null;
+
+    // KeyTube lists the overall observed range, not a reviewed chest/falsetto split.
+    // Use the most frequent pitch only as a conservative proxy for the repeated
+    // high-note zone when it sits reasonably close to the top of the range.
+    let stableHigh = null;
+    if (Number.isFinite(common) && common > low && common <= peak && common >= peak - 5) {
+      stableHigh = common;
+    }
+
+    const localLines = lines(content).filter(line =>
+      /最低音|最高音|平均値|最頻音|最も多く使われている音程|監修/.test(line)
+    ).slice(0,18);
+    const noteText = localLines.join(' ');
+    const reviewed = !/監修されていません/.test(noteText);
+
+    return buildRange({
+      low,peak,
+      falsetto:null,
+      noteText,
+      stableHigh,
+      source:'WEB / KeyTube',
+      sourceUrl:url,
+      sourceQuality:reviewed ? 84 : 74
+    });
+  }
+
   function parseGeneric(item, title, artist) {
     const content = String(item.content || '');
     if (!containsIdentity(item,title,artist)) return null;
@@ -352,6 +396,7 @@ ${content}`;
     return parseMusicKey(item,title,artist) ||
            parseSaikouonWiki(item,title,artist) ||
            parseKkti(item,title,artist) ||
+           parseKeyTube(item,title,artist) ||
            parseGeneric(item,title,artist);
   }
 
@@ -430,7 +475,7 @@ ${content}`;
   }
   if(keyBtn)keyBtn.onclick=setJinaKey;
 
-  const FREE_SOURCE_DOMAINS=['kkti.app','music-key.com','www.music-key.com','w.atwiki.jp'];
+  const FREE_SOURCE_DOMAINS=['kkti.app','music-key.com','www.music-key.com','w.atwiki.jp','keytube.net','www.keytube.net'];
 
   function allowedSourceUrl(value){
     try{
@@ -512,6 +557,7 @@ ${content}`;
     const primary=variants[0]||who;
     const queries=[
       `"${title}" "${primary}" 音域 最高音 最低音`,
+      `site:keytube.net/song/detail/ "${title}" "${primary}"`,
       `site:kkti.app/key/songs/ "${title}" "${primary}"`,
       `site:music-key.com "${title}" "${primary}"`
     ];
@@ -524,8 +570,8 @@ ${content}`;
     let readerHits=0;
     let lastFreeError='';
 
-    for(let qi=0;qi<Math.min(queries.length,3);qi++){
-      diag(`無料検索 ${qi+1}/${Math.min(queries.length,3)}`);
+    for(let qi=0;qi<Math.min(queries.length,4);qi++){
+      diag(`無料検索 ${qi+1}/${Math.min(queries.length,4)}`);
       let discovery;
       try{discovery=await discoverFreeUrls(queries[qi]);}
       catch(err){lastFreeError=String(err?.message||'');continue;}
@@ -937,5 +983,5 @@ ${content}`;
     ? '音域検索：無料WEB優先 / 予備検索APIも準備OK'
     : '音域検索：無料WEB優先。予備検索APIは未設定でも使えます。';
 
-  diag(getJinaKey()?'無料優先モード v4.4.0 / 予備APIあり':'無料優先モード v4.4.0');
+  diag(getJinaKey()?'無料優先モード v4.4.1 / 予備APIあり':'無料優先モード v4.4.1');
 })();
