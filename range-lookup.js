@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.4.4';
+  const VERSION = '4.4.5';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
   const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v2';
@@ -31,7 +31,12 @@
     .replace(/﨑/g,'崎');
   const artistQueryVariants = (v) => {
     const raw=String(v||'').trim();
-    const vars=[raw, raw.replace(/[ーｰ]+$/g,'')].filter(Boolean);
+    const vars=[
+      raw,
+      raw.replace(/[ーｰ]+$/g,''),
+      raw.replace(/徳/g,'德').replace(/高/g,'髙').replace(/崎/g,'﨑').replace(/神/g,'神'),
+      raw.replace(/德/g,'徳').replace(/髙/g,'高').replace(/﨑/g,'崎').replace(/神/g,'神')
+    ].filter(Boolean);
     return [...new Set(vars)];
   };
 
@@ -357,7 +362,7 @@ ${content}`;
     const url = String(item.url || '');
     const content = String(item.content || '');
     if (!/keytube\.net\/song\/detail\//i.test(url)) return null;
-    if (!containsIdentity(item,title,artist)) return null;
+    if (!item?._identityVerifiedBySearch && !containsIdentity(item,title,artist)) return null;
 
     const low = noteFromLabels(content, ['最低音']);
     const peak = noteFromLabels(content, ['最高音']);
@@ -562,13 +567,45 @@ ${content}`;
     return uniqueAllowedUrls(urls);
   }
 
+  function keyTubeSearchCandidates(text,title,artist){
+    const raw=String(text||'');
+    const ls=lines(raw);
+    const qt=norm(title);
+    const qa=artistNorm(artist);
+    const rows=[];
+    const re=/(https?:\/\/(?:www\.)?keytube\.net\/song\/detail\/\d+|\/song\/detail\/\d+)/ig;
+    for(let i=0;i<ls.length;i++){
+      const matches=[...ls[i].matchAll(re)];
+      for(const m of matches){
+        let url=m[1];
+        if(url.startsWith('/'))url='https://keytube.net'+url;
+        const local=ls.slice(Math.max(0,i-5),Math.min(ls.length,i+7)).join(' ');
+        const titleOk=!qt || norm(local).includes(qt);
+        const artistOk=!qa || artistNorm(local).includes(qa);
+        rows.push({url,verified:titleOk&&artistOk,titleOk,artistOk,context:local.slice(0,700)});
+      }
+    }
+    // Fallback for formats where the URL was extracted but not line-local.
+    for(const url of urlsFromSearchPayload(raw)){
+      if(!/keytube\.net\/song\/detail\/\d+/i.test(url))continue;
+      if(!rows.some(x=>x.url===url))rows.push({url,verified:false,titleOk:false,artistOk:false,context:''});
+    }
+    const best=new Map();
+    for(const row of rows){
+      const prev=best.get(row.url);
+      if(!prev || Number(row.verified)>Number(prev.verified) || (row.artistOk&&!prev.artistOk))best.set(row.url,row);
+    }
+    return [...best.values()];
+  }
+
   async function discoverKeyTubeUrls(title,artist){
-    // KeyTube already has a public song search UI. Reading that page via the
-    // free Reader is much more reliable than asking Bing to discover it.
-    // Try title+artist first, then title only because variant kanji such as
-    // 徳/德 can prevent an exact search on some indexes.
+    // KeyTube's index may store variant kanji (徳永 → 德永). Query both the
+    // entered spelling and conservative variant spellings, and keep the local
+    // search-result context so the artist/version can be verified BEFORE the
+    // detail page is parsed.
+    const variants=artistQueryVariants(artist);
     const words=[
-      `${title} ${artist||''}`.trim(),
+      ...variants.map(a=>`${title} ${a}`.trim()),
       String(title||'').trim()
     ].filter(Boolean);
     const found=[];
@@ -579,15 +616,19 @@ ${content}`;
       try{
         const got=await directOrReaderText(target);
         via=got.via;
-        for(const url of urlsFromSearchPayload(got.text)){
-          if(/keytube\.net\/song\/detail\/\d+/i.test(url))found.push(url);
-        }
+        found.push(...keyTubeSearchCandidates(got.text,title,artist));
       }catch(err){
         lastError=String(err?.message||'');
       }
-      if(found.length>=6)break;
+      if(found.some(x=>x.verified))break;
     }
-    return {urls:[...new Set(found)],via,lastError};
+    const byUrl=new Map();
+    for(const row of found){
+      const prev=byUrl.get(row.url);
+      if(!prev || Number(row.verified)>Number(prev.verified))byUrl.set(row.url,row);
+    }
+    const rows=[...byUrl.values()].sort((a,b)=>Number(b.verified)-Number(a.verified));
+    return {rows,urls:rows.map(x=>x.url),via,lastError};
   }
 
   async function discoverFreeUrls(query){
@@ -667,9 +708,10 @@ ${content}`;
     let htmlNormalized=0;
     let identityHits=0;
     let parseAttempts=0;
+    let keyTubeVerified=0;
     let lastFreeError='';
 
-    async function inspectUrls(urls){
+    async function inspectUrls(urls,hints=new Map()){
       discovered+=urls.length;
       for(const url of urls.slice(0,8)){
         if(seenUrls.has(url))continue;
@@ -678,7 +720,17 @@ ${content}`;
         try{item=await freePageItem(url);}catch(err){lastFreeError=String(err?.message||'');continue;}
         if(item._via==='direct')directHits++;else readerHits++;
         if(item._rawHtml)htmlNormalized++;
-        const evidence=identityEvidence(item,title,artist);
+        const hint=hints.get(url)||null;
+        let evidence=identityEvidence(item,title,artist);
+        // For KeyTube, a native search result can safely verify the exact
+        // title+artist pair even when Reader strips the H1/artist from the
+        // detail page. This remains cover-safe because the verification was
+        // made on KeyTube's own result row, not from the query string alone.
+        if(evidence < (artist ? 30 : 20) && hint?.verified && /keytube\.net\/song\/detail\/\d+/i.test(url)){
+          evidence=55;
+          item._identityVerifiedBySearch=true;
+          keyTubeVerified++;
+        }
         if(evidence < (artist ? 30 : 20))continue;
         identityHits++;
         parseAttempts++;
@@ -698,7 +750,8 @@ ${content}`;
     try{
       const kt=await discoverKeyTubeUrls(title,artist);
       if(kt.lastError)lastFreeError=kt.lastError;
-      await inspectUrls(kt.urls);
+      const hints=new Map((kt.rows||[]).map(x=>[x.url,x]));
+      await inspectUrls(kt.urls,hints);
     }catch(err){lastFreeError=String(err?.message||'');}
 
     let strong=candidates.find(x=>Number(x.sourceQuality)>=74&&Number(x.identityScore)>=50);
@@ -718,7 +771,7 @@ ${content}`;
 
     candidates.sort((a,b)=>b._score-a._score);
     const reliable=candidates.filter(x=>Number(x.sourceQuality)>=65&&Number(x.identityScore)>=30);
-    return {range:reliable[0]||null,candidates,discovered,directHits,readerHits,htmlNormalized,identityHits,parseAttempts,lastFreeError};
+    return {range:reliable[0]||null,candidates,discovered,directHits,readerHits,htmlNormalized,identityHits,parseAttempts,keyTubeVerified,lastFreeError};
   }
 
   async function jinaSearch(query,key) {
@@ -1047,7 +1100,7 @@ ${content}`;
         const fetched=(freeFound?.directHits||0)+(freeFound?.readerHits||0);
         const freeDiag=freeFound?.lastFreeError?.includes('RATE_LIMIT')
           ? `無料Reader混雑 / 候補URL ${freeFound?.discovered||0}件`
-          : `無料検索：候補URL ${freeFound?.discovered||0}件 / 詳細取得 ${fetched}件 / HTML整形 ${freeFound?.htmlNormalized||0}件 / 歌手一致 ${freeFound?.identityHits||0}件 / 解析成功 ${freeFound?.candidates?.length||0}件`;
+          : `無料検索：候補URL ${freeFound?.discovered||0}件 / 詳細取得 ${fetched}件 / HTML整形 ${freeFound?.htmlNormalized||0}件 / 歌手一致 ${freeFound?.identityHits||0}件（検索照合 ${freeFound?.keyTubeVerified||0}件） / 解析成功 ${freeFound?.candidates?.length||0}件`;
         diag(freeDiag);
         if(statusEl)statusEl.textContent=`無料検索では歌手版まで確認できる音域が見つかりませんでした。${suffix} 手入力ならそのまま判定できます。`;
         // Do not block on transient Reader errors. Only cache a true no-result.
@@ -1093,7 +1146,7 @@ ${content}`;
       }else{
         const fetched=(typeof freeFound!=='undefined'&&freeFound)?((freeFound.directHits||0)+(freeFound.readerHits||0)):0;
         const extra=(typeof freeFound!=='undefined'&&freeFound)
-          ? `無料候補URL ${freeFound.discovered||0}件 / 詳細取得 ${fetched}件 / HTML整形 ${freeFound.htmlNormalized||0}件 / 歌手一致 ${freeFound.identityHits||0}件 / 解析成功 ${freeFound.candidates?.length||0}件`
+          ? `無料候補URL ${freeFound.discovered||0}件 / 詳細取得 ${fetched}件 / HTML整形 ${freeFound.htmlNormalized||0}件 / 歌手一致 ${freeFound.identityHits||0}件（検索照合 ${freeFound.keyTubeVerified||0}件） / 解析成功 ${freeFound.candidates?.length||0}件`
           : '無料検索情報なし';
         diag(`音域検索エラー / ${extra}`);
         if(statusEl)statusEl.textContent='音域検索に失敗しました。キー/BPMは残しています。無料検索は次回も試せます。手入力でも判定できます。';
@@ -1108,5 +1161,5 @@ ${content}`;
     ? '音域検索：無料WEB優先 / 予備検索APIも準備OK'
     : '音域検索：無料WEB優先。予備検索APIは未設定でも使えます。';
 
-  diag(getJinaKey()?'無料優先モード v4.4.4 / 予備APIあり':'無料優先モード v4.4.4');
+  diag(getJinaKey()?'無料優先モード v4.4.5 / 予備APIあり':'無料優先モード v4.4.5');
 })();
