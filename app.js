@@ -1,4 +1,4 @@
-const APP_VERSION='4.3.1';
+const APP_VERSION='4.4.0';
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const STORAGE_KEY='zukka-key-data-v1';
 const RANGE_STORAGE='zukka-key-song-ranges-v1';

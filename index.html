@@ -62,10 +62,10 @@
         <div class="api-search-row">
           <button class="secondary api-search-btn" id="autoLookupBtn">曲データ取得 → ずっか判定</button>
           <button class="text-button api-key-btn" id="apiKeyBtn">APIキー設定</button>
-          <button class="text-button api-key-btn" id="rangeApiKeyBtn">音域API設定</button>
+          <button class="text-button api-key-btn" id="rangeApiKeyBtn">予備検索API設定</button>
         </div>
         <p class="api-status" id="apiStatus">GetSongKEYから入力した歌手版のキー/BPMを取得し、保存済みの歌唱データと照合します。</p>
-        <p class="api-status" id="rangeSearchStatus">保存済み音域を最優先し、未登録の曲だけWEB音域検索を使います。<a href="https://jina.ai/api-dashboard/" target="_blank" rel="noopener" style="color:#83b8ff">Jina APIキー設定</a></p>
+        <p class="api-status" id="rangeSearchStatus">保存済み音域を最優先し、未登録だけ無料WEB検索。見つからない時だけ予備検索APIを使います。</p>
         <p class="api-status" id="rangeDiagnostic">WEB音域診断: 待機中</p>
 
         <div class="api-result hidden" id="apiResult">
@@ -195,7 +195,7 @@
     Song data by <a href="https://getsongbpm.com/" target="_blank" rel="noopener">GetSongBPM</a>
   </p>
 
-  <script src="app.js?v=4.3.1"></script>
-  <script src="range-lookup.js?v=4.3.1"></script>
+  <script src="app.js?v=4.4.0"></script>
+  <script src="range-lookup.js?v=4.4.0"></script>
 </body>
 </html>

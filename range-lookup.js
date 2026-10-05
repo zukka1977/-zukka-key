@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.3.1';
+  const VERSION = '4.4.0';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
   const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v1';
@@ -384,13 +384,15 @@ ${content}`;
     state.__global__={reason,until:Date.now()+minutes*60*1000};
     writeLookupState(state);
   }
+  function paidSearchBlock(){
+    const state=readLookupState();
+    const row=state.__global__;
+    if(!row)return null;
+    if(Number(row.until)<=Date.now()){delete state.__global__;writeLookupState(state);return null;}
+    return row;
+  }
   function lookupBlock(title,artist){
     const state=readLookupState();
-    const globalRow=state.__global__;
-    if(globalRow){
-      if(Number(globalRow.until)>Date.now())return globalRow;
-      delete state.__global__;writeLookupState(state);
-    }
     const key=lookupIdentity(title,artist);
     const row=state[key];
     if(!row)return null;
@@ -427,6 +429,133 @@ ${content}`;
     return true;
   }
   if(keyBtn)keyBtn.onclick=setJinaKey;
+
+  const FREE_SOURCE_DOMAINS=['kkti.app','music-key.com','www.music-key.com','w.atwiki.jp'];
+
+  function allowedSourceUrl(value){
+    try{
+      const u=new URL(String(value||''));
+      return FREE_SOURCE_DOMAINS.some(d=>u.hostname===d||u.hostname.endsWith('.'+d));
+    }catch(_){return false;}
+  }
+
+  function uniqueAllowedUrls(values){
+    const out=[];const seen=new Set();
+    for(const value of values){
+      let url=String(value||'').replace(/&amp;/g,'&').trim();
+      if(!allowedSourceUrl(url))continue;
+      try{
+        const u=new URL(url);u.hash='';url=u.toString();
+      }catch(_){continue;}
+      if(seen.has(url))continue;seen.add(url);out.push(url);
+    }
+    return out;
+  }
+
+  async function timedFetch(url,opts={},ms=10000){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),ms);
+    try{return await fetch(url,{...opts,signal:controller.signal});}
+    finally{clearTimeout(timer);}
+  }
+
+  async function readerFetch(targetUrl){
+    const endpoint='https://r.jina.ai/'+targetUrl;
+    let res;
+    try{
+      res=await timedFetch(endpoint,{method:'GET',mode:'cors',cache:'no-store',headers:{Accept:'text/plain','X-No-Cache':'true'}},12000);
+    }catch(err){
+      if(err?.name==='AbortError')throw new Error('FREE_READER_TIMEOUT');
+      throw new Error('FREE_READER_NETWORK');
+    }
+    const text=await res.text().catch(()=> '');
+    if(res.status===429)throw new Error('FREE_READER_RATE_LIMIT');
+    if(res.status>=500)throw new Error('FREE_READER_TEMP');
+    if(!res.ok)throw new Error(`FREE_READER_HTTP_${res.status}`);
+    return text;
+  }
+
+  async function directOrReaderText(targetUrl){
+    // Some source sites allow CORS. Use them directly first so Jina is not
+    // touched at all; Reader is only a compatibility fallback.
+    try{
+      const res=await timedFetch(targetUrl,{method:'GET',mode:'cors',cache:'no-store',headers:{Accept:'text/html,text/plain,application/xml'}},6500);
+      if(res.ok)return {text:await res.text(),via:'direct'};
+    }catch(_){}
+    return {text:await readerFetch(targetUrl),via:'reader'};
+  }
+
+  function urlsFromSearchPayload(text){
+    const raw=String(text||'');
+    const urls=[];
+    for(const m of raw.matchAll(/<link>(https?:\/\/[^<]+)<\/link>/ig))urls.push(m[1]);
+    for(const m of raw.matchAll(/\]\((https?:\/\/[^)\s]+)\)/g))urls.push(m[1]);
+    for(const m of raw.matchAll(/https?:\/\/[^\s<>"')\]]+/g))urls.push(m[0]);
+    return uniqueAllowedUrls(urls);
+  }
+
+  async function discoverFreeUrls(query){
+    const bing=`https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss&count=8`;
+    const got=await directOrReaderText(bing);
+    return {urls:urlsFromSearchPayload(got.text),via:got.via};
+  }
+
+  async function freePageItem(url){
+    const got=await directOrReaderText(url);
+    const first=String(got.text||'').split(/\r?\n/).find(x=>x.trim())||'';
+    return {url,title:first.slice(0,180),content:got.text,_via:got.via};
+  }
+
+  async function searchRangeFree(title,artist){
+    const who=String(artist||'').trim();
+    const variants=artistQueryVariants(who);
+    const primary=variants[0]||who;
+    const queries=[
+      `"${title}" "${primary}" 音域 最高音 最低音`,
+      `site:kkti.app/key/songs/ "${title}" "${primary}"`,
+      `site:music-key.com "${title}" "${primary}"`
+    ];
+    if(variants[1])queries.push(`"${title}" "${variants[1]}" 音域`);
+
+    const seenUrls=new Set();
+    const candidates=[];
+    let discovered=0;
+    let directHits=0;
+    let readerHits=0;
+    let lastFreeError='';
+
+    for(let qi=0;qi<Math.min(queries.length,3);qi++){
+      diag(`無料検索 ${qi+1}/${Math.min(queries.length,3)}`);
+      let discovery;
+      try{discovery=await discoverFreeUrls(queries[qi]);}
+      catch(err){lastFreeError=String(err?.message||'');continue;}
+
+      const urls=discovery.urls.slice(0,5);
+      discovered+=urls.length;
+      for(const url of urls){
+        if(seenUrls.has(url))continue;
+        seenUrls.add(url);
+        let item;
+        try{item=await freePageItem(url);}catch(err){lastFreeError=String(err?.message||'');continue;}
+        if(item._via==='direct')directHits++;else readerHits++;
+        const evidence=identityEvidence(item,title,artist);
+        if(evidence < (artist ? 30 : 20))continue;
+        const parsed=parseAny(item,title,artist);
+        if(!parsed)continue;
+        let score=Number(parsed.sourceQuality||0)+evidence;
+        if(parsed.falsetto!=null)score+=5;
+        if(parsed.oneOffPeak||parsed.frequentPeak)score+=6;
+        if(parsed.noteText)score+=2;
+        candidates.push({...parsed,identityScore:evidence,_score:score,freeFetch:item._via});
+      }
+      const strong=candidates.find(x=>Number(x.sourceQuality)>=88&&Number(x.identityScore)>=50);
+      if(strong)break;
+    }
+
+    candidates.sort((a,b)=>b._score-a._score);
+    const reliable=candidates.filter(x=>Number(x.sourceQuality)>=65&&Number(x.identityScore)>=30);
+    return {range:reliable[0]||null,candidates,discovered,directHits,readerHits,lastFreeError};
+  }
 
   async function jinaSearch(query,key) {
     const controller=new AbortController();
@@ -478,7 +607,7 @@ ${content}`;
     return getItems(payload);
   }
 
-  async function searchRange(title,artist) {
+  async function searchRangePaid(title,artist) {
     const key=getJinaKey();
     if(!key)return {needsKey:true};
 
@@ -714,74 +843,90 @@ ${content}`;
     const blocked=lookupBlock(title,artist);
     if(blocked){
       markPending('音域待ち');
-      diag(blocked.reason==='quota'?'利用上限・再試行待ち':'直近検索を再利用');
-      if(statusEl)statusEl.textContent=blocked.reason==='quota'
-        ? 'WEB音域検索は利用上限のため一時停止中です。キー/BPMはそのまま使えます。手入力で判定を続けられます。'
-        : 'この曲は直近のWEB検索で確かな音域が見つかりませんでした。API節約のため少し時間を空けて再検索します。';
-      return;
-    }
-
-    if(!getJinaKey()){
-      markPending('音域待ち');
-      diag('音域APIキー未設定');
-      if(statusEl)statusEl.textContent='「音域API設定」でJina APIキーを登録してください。';
+      diag('直近検索を再利用');
+      if(statusEl)statusEl.textContent='この曲は直近の検索で確かな音域が見つかりませんでした。API節約のため少し時間を空けて再検索します。手入力なら今すぐ続けられます。';
       return;
     }
 
     const oldText=btn.textContent;
     btn.disabled=true;
-    btn.textContent='WEB音域精査中…';
-    if(statusEl)statusEl.textContent='GetSongに曲がなくても問題ありません。複数の音域DBを照合しています…';
+    btn.textContent='無料音域検索中…';
+    if(statusEl)statusEl.textContent='保存データ → 無料WEB検索 → 必要な時だけ有料検索API、の順で探しています…';
 
     try{
-      const found=await searchRange(title,artist);
+      // v4.4: paid Jina Search is no longer the primary path.
+      // First discover/fetch source pages with direct CORS where possible,
+      // falling back to the unauthenticated Reader endpoint only when needed.
+      let freeFound=null;
+      try{freeFound=await searchRangeFree(title,artist);}catch(err){freeFound={range:null,lastFreeError:String(err?.message||'')};}
+
+      if(freeFound?.range){
+        if(titleEl)titleEl.value=title;
+        if(artistEl)artistEl.value=artist;
+        clearLookupBlock(title,artist);
+        applyRange(freeFound.range,title,artist);
+        const apiStatus=document.getElementById('apiStatus');
+        if(apiStatus)apiStatus.textContent='無料WEB音域を確認し、ずっかの声プロフィールで推奨キーを判定しました。';
+        const route=freeFound.range.freeFetch==='direct'?'直接取得':'無料Reader経由';
+        diag(`${freeFound.range.source} 採用 / ${route}`);
+        if(statusEl)statusEl.textContent=`無料音域取得成功：${midiLabel(freeFound.range.low)}〜${midiLabel(freeFound.range.peak)}（${route}）`;
+        return;
+      }
+
+      // Only if free discovery could not produce a reliable range do we use
+      // the paid Search API, and only when the user has configured a key.
+      const paidBlock=paidSearchBlock();
+      const paidKey=getJinaKey();
+      if(!paidKey || paidBlock){
+        markPending('音域待ち');
+        const suffix=paidBlock?'有料検索APIは利用上限のため休止中です。':'必要なら「予備検索API設定」で有料検索を追加できます。';
+        const freeDiag=freeFound?.lastFreeError?.includes('RATE_LIMIT')?'無料Reader混雑':'無料検索で一致データなし';
+        diag(freeDiag);
+        if(statusEl)statusEl.textContent=`無料検索では歌手版まで確認できる音域が見つかりませんでした。${suffix} 手入力ならそのまま判定できます。`;
+        // Do not block on transient Reader errors. Only cache a true no-result.
+        if(!freeFound?.lastFreeError)blockLookup(title,artist,'no-result',180);
+        return;
+      }
+
+      btn.textContent='予備WEB検索中…';
+      if(statusEl)statusEl.textContent='無料検索では見つからなかったため、予備の検索APIを1回だけ使っています…';
+      const found=await searchRangePaid(title,artist);
 
       if(!found.range){
         markPending('音域待ち');
         blockLookup(title,artist,'no-result',360);
-        diag(`一致データなし（検索結果 ${found.count||0}件）`);
-        if(statusEl)statusEl.textContent=
-          '曲名・アーティストが一致する信頼できる音域データを確認できませんでした。誤判定防止のため推測値は出していません。手入力で続行できます。';
+        diag(`一致データなし（予備検索 ${found.count||0}件）`);
+        if(statusEl)statusEl.textContent='無料検索＋予備検索でも、曲名・アーティストが一致する信頼できる音域を確認できませんでした。誤判定防止のため推測値は出していません。手入力で続行できます。';
         return;
       }
 
       if(titleEl)titleEl.value=title;
       if(artistEl)artistEl.value=artist;
       clearLookupBlock(title,artist);
-
       applyRange(found.range,title,artist);
 
       const apiStatus=document.getElementById('apiStatus');
-      if(apiStatus)apiStatus.textContent=
-        'WEB音域を複数候補から精査し、ずっかの声プロフィールで推奨キーを判定しました。';
-
-      diag(`${found.range.source} 採用`);
-      if(statusEl)statusEl.textContent=
-        `音域取得成功：${midiLabel(found.range.low)}〜${midiLabel(found.range.peak)}` +
-        (found.range.oneOffPeak ? '（最高音は1回型）' : '');
+      if(apiStatus)apiStatus.textContent='予備WEB検索から音域を確認し、ずっかの声プロフィールで推奨キーを判定しました。';
+      diag(`${found.range.source} 採用 / 予備検索API`);
+      if(statusEl)statusEl.textContent=`音域取得成功：${midiLabel(found.range.low)}〜${midiLabel(found.range.peak)}（予備検索API）`;
     }catch(err){
       console.error(err);
       markPending('音域待ち');
       const msg=String(err?.message||'');
       if(msg==='JINA_AUTH'){
-        diag('Jina認証エラー');
-        if(statusEl)statusEl.textContent='Jina APIキーが無効です。「音域API設定」から入れ直してください。';
+        diag('予備検索API認証エラー');
+        if(statusEl)statusEl.textContent='予備検索APIキーが無効です。「予備検索API設定」から入れ直してください。無料検索と手入力は引き続き使えます。';
       }else if(msg==='JINA_QUOTA'){
         blockGlobalLookup('quota',720);
-        diag('Jina利用上限');
-        if(statusEl)statusEl.textContent='WEB音域検索の利用上限に達しました。キー/BPMは取得済みのまま残します。音域を手入力すれば判定を続けられます。';
+        diag('予備検索API利用上限');
+        if(statusEl)statusEl.textContent='予備検索APIの利用上限に達しました。無料検索は次の曲でも引き続き使えます。音域を手入力しても判定できます。';
       }else if(msg==='JINA_RATE_LIMIT'){
-        blockLookup(title,artist,'rate-limit',5);
-        diag('Jina混雑・再試行待ち');
-        if(statusEl)statusEl.textContent='WEB音域検索が混み合っています。数分後に再試行するか、手入力で続けてください。';
-      }else if(msg==='JINA_TIMEOUT'||msg==='JINA_NETWORK'||msg==='JINA_TEMP'){
-        diag('WEB音域検索を一時利用できません');
-        if(statusEl)statusEl.textContent='WEB音域検索を一時利用できません。キー/BPMは残しています。通信回復後に再試行できます。';
+        diag('予備検索API混雑');
+        if(statusEl)statusEl.textContent='予備検索APIが混み合っています。無料検索は利用できます。数分後に再試行するか、手入力で続けてください。';
       }else{
-        diag('WEB音域検索エラー');
-        if(statusEl)statusEl.textContent='WEB音域検索に失敗しました。キー/BPMは残しています。手入力で判定を続けられます。';
+        diag('音域検索エラー');
+        if(statusEl)statusEl.textContent='音域検索に失敗しました。キー/BPMは残しています。無料検索は次回も試せます。手入力でも判定できます。';
       }
-
     }finally{
       btn.disabled=false;
       btn.textContent=oldText;
@@ -789,8 +934,8 @@ ${content}`;
   };
 
   if(statusEl)statusEl.textContent=getJinaKey()
-    ? 'WEB音域検索：準備OK（複数ソース精査モード）'
-    : '初めての曲はWEB音域検索を使います。音域APIキーは未設定です。';
+    ? '音域検索：無料WEB優先 / 予備検索APIも準備OK'
+    : '音域検索：無料WEB優先。予備検索APIは未設定でも使えます。';
 
-  diag(getJinaKey()?'準備OK v4.3.1':'APIキー未設定');
+  diag(getJinaKey()?'無料優先モード v4.4.0 / 予備APIあり':'無料優先モード v4.4.0');
 })();
