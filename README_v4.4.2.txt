@@ -24,3 +24,5 @@ v4.4.2追加
 - 検索ページから候補曲URLを拾い、各詳細ページで曲名＋歌手を再確認してから採用
 - KeyTube内検索で候補が取れない場合だけ従来の補助WEB検索へフォールバック
 - たそがれマイ・ラブ / 徳永英明 のようなカバー違いが多い曲でも、歌手一致を維持
+
+Build fix: displayed APP_VERSION corrected to 4.4.2; service worker registration cache-busted by version.

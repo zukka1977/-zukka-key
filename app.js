@@ -1,4 +1,4 @@
-const APP_VERSION='4.4.1';
+const APP_VERSION='4.4.2';
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const STORAGE_KEY='zukka-key-data-v1';
 const RANGE_STORAGE='zukka-key-song-ranges-v1';
@@ -232,4 +232,4 @@ highDensity.oninput=()=>densityLabel.textContent=['','少ない','やや少な�
 [songTitle,artist,chorusTop,chestPeak,falsettoPeak,lowNote,highDensity].forEach(el=>el.addEventListener('change',()=>{if(el===chorusTop||el===chestPeak||el===falsettoPeak||el===lowNote||el===highDensity){rangeSourceBadge.textContent='手入力';currentRangeSource='manual';if(rangeFormComplete()){personalKeyStatus.textContent='判定待ち';personalKeyStatus.className='warn';}else{setPredictionPending('音域待ち');}}}));
 sampleBtn.onclick=()=>{songTitle.value='会いたい';artist.value='徳永英明';};installHelpBtn.onclick=()=>installDialog.showModal();closeDialog.onclick=()=>installDialog.close();exportBtn.onclick=exportData;importInput.onchange=e=>e.target.files[0]&&importData(e.target.files[0]);
 resetBtn.onclick=()=>{if(confirm('追加した学習データと保存した曲別音域を消して初期状態に戻しますか？')){data=clone(defaultData);rangeLibrary={};localStorage.removeItem(RANGE_STORAGE);saveData()}};
-if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(r=>r.update()).catch(()=>{}));
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v='+APP_VERSION).then(r=>r.update()).catch(()=>{}));
