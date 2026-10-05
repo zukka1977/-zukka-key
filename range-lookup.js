@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '4.4.1';
+  const VERSION = '4.4.2';
   const JINA_KEY_STORAGE = 'zukka-key-jina-api-key';
   const RANGE_STORAGE = 'zukka-key-song-ranges-v1';
   const LOOKUP_STATE_STORAGE = 'zukka-key-range-lookup-state-v2';
@@ -536,7 +536,41 @@ ${content}`;
     for(const m of raw.matchAll(/<link>(https?:\/\/[^<]+)<\/link>/ig))urls.push(m[1]);
     for(const m of raw.matchAll(/\]\((https?:\/\/[^)\s]+)\)/g))urls.push(m[1]);
     for(const m of raw.matchAll(/https?:\/\/[^\s<>"')\]]+/g))urls.push(m[0]);
+
+    // Jina Reader can emit relative KeyTube links on the native search page.
+    // Resolve those here so we do not need a general-purpose search engine first.
+    for(const m of raw.matchAll(/(?:href=["']?|\]\()?(\/song\/detail\/\d+)/ig)){
+      urls.push('https://keytube.net'+m[1]);
+    }
     return uniqueAllowedUrls(urls);
+  }
+
+  async function discoverKeyTubeUrls(title,artist){
+    // KeyTube already has a public song search UI. Reading that page via the
+    // free Reader is much more reliable than asking Bing to discover it.
+    // Try title+artist first, then title only because variant kanji such as
+    // 徳/德 can prevent an exact search on some indexes.
+    const words=[
+      `${title} ${artist||''}`.trim(),
+      String(title||'').trim()
+    ].filter(Boolean);
+    const found=[];
+    let via='';
+    let lastError='';
+    for(const word of [...new Set(words)]){
+      const target=`https://keytube.net/search/?t=song&word=${encodeURIComponent(word)}`;
+      try{
+        const got=await directOrReaderText(target);
+        via=got.via;
+        for(const url of urlsFromSearchPayload(got.text)){
+          if(/keytube\.net\/song\/detail\/\d+/i.test(url))found.push(url);
+        }
+      }catch(err){
+        lastError=String(err?.message||'');
+      }
+      if(found.length>=6)break;
+    }
+    return {urls:[...new Set(found)],via,lastError};
   }
 
   async function discoverFreeUrls(query){
@@ -570,15 +604,9 @@ ${content}`;
     let readerHits=0;
     let lastFreeError='';
 
-    for(let qi=0;qi<Math.min(queries.length,4);qi++){
-      diag(`無料検索 ${qi+1}/${Math.min(queries.length,4)}`);
-      let discovery;
-      try{discovery=await discoverFreeUrls(queries[qi]);}
-      catch(err){lastFreeError=String(err?.message||'');continue;}
-
-      const urls=discovery.urls.slice(0,5);
+    async function inspectUrls(urls){
       discovered+=urls.length;
-      for(const url of urls){
+      for(const url of urls.slice(0,8)){
         if(seenUrls.has(url))continue;
         seenUrls.add(url);
         let item;
@@ -594,8 +622,30 @@ ${content}`;
         if(parsed.noteText)score+=2;
         candidates.push({...parsed,identityScore:evidence,_score:score,freeFetch:item._via});
       }
-      const strong=candidates.find(x=>Number(x.sourceQuality)>=88&&Number(x.identityScore)>=50);
-      if(strong)break;
+    }
+
+    // 1) Native KeyTube search page first. This avoids the brittle Bing+CORS
+    // discovery route and is enough for many mainstream/covers.
+    diag('無料検索：KeyTube内検索');
+    try{
+      const kt=await discoverKeyTubeUrls(title,artist);
+      if(kt.lastError)lastFreeError=kt.lastError;
+      await inspectUrls(kt.urls);
+    }catch(err){lastFreeError=String(err?.message||'');}
+
+    let strong=candidates.find(x=>Number(x.sourceQuality)>=74&&Number(x.identityScore)>=50);
+
+    // 2) If KeyTube did not find a confirmed artist/version, broaden discovery.
+    if(!strong){
+      for(let qi=0;qi<Math.min(queries.length,4);qi++){
+        diag(`無料検索：補助 ${qi+1}/${Math.min(queries.length,4)}`);
+        let discovery;
+        try{discovery=await discoverFreeUrls(queries[qi]);}
+        catch(err){lastFreeError=String(err?.message||'');continue;}
+        await inspectUrls(discovery.urls.slice(0,5));
+        strong=candidates.find(x=>Number(x.sourceQuality)>=88&&Number(x.identityScore)>=50);
+        if(strong)break;
+      }
     }
 
     candidates.sort((a,b)=>b._score-a._score);
